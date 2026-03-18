@@ -16,6 +16,7 @@
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
 use std::collections::HashMap;
+use std::mem;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -30,9 +31,11 @@ use crate::compact::{
     CompactionController, CompactionOptions, LeveledCompactionController, LeveledCompactionOptions,
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
 };
+use crate::iterators::StorageIterator;
+use crate::iterators::merge_iterator::MergeIterator;
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
-use crate::mem_table::MemTable;
+use crate::mem_table::{MemTable, MemTableIterator};
 use crate::mvcc::LsmMvccInner;
 use crate::table::SsTable;
 
@@ -299,31 +302,30 @@ impl LsmStorageInner {
     /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
     pub fn get(&self, _key: &[u8]) -> Result<Option<Bytes>> {
         let snapshot = {
-            let guard = self.state.read() ; 
-            Arc::clone(&guard) 
-        } ;  // lock is dropped here 
+            let guard = self.state.read();
+            Arc::clone(&guard)
+        }; // lock is dropped here 
 
-        if let Some(_value) = snapshot.memtable.get(_key){ 
-            if _value.is_empty() { 
+        if let Some(_value) = snapshot.memtable.get(_key) {
+            if _value.is_empty() {
                 // tombstone
-                return Ok(None)
+                return Ok(None);
             }
-            return Ok(Some(_value))
-        } 
-
-        for memtable in snapshot.imm_memtables.iter() { 
-            if let Some(_value) = memtable.get(_key){ 
-                if _value.is_empty() { 
-                    // tombstone
-                    return Ok(None)
-                }
-                return Ok(Some(_value))
-            } 
+            return Ok(Some(_value));
         }
 
-        // value not found 
-        Ok(None)
+        for memtable in snapshot.imm_memtables.iter() {
+            if let Some(_value) = memtable.get(_key) {
+                if _value.is_empty() {
+                    // tombstone
+                    return Ok(None);
+                }
+                return Ok(Some(_value));
+            }
+        }
 
+        // value not found
+        Ok(None)
     }
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.
@@ -333,22 +335,20 @@ impl LsmStorageInner {
 
     /// Put a key-value pair into the storage by writing into the current memtable.
     pub fn put(&self, _key: &[u8], _value: &[u8]) -> Result<()> {
+        let guard = self.state.read();
 
-        let guard = self.state.read() ; 
-        
         guard.memtable.put(_key, _value)?;
 
         if guard.memtable.approximate_size() > self.options.target_sst_size {
-            let lock = self.state_lock.lock() ; 
-            // check again, another thread might have frozen memtable 
-            if guard.memtable.approximate_size() > self.options.target_sst_size { 
+            let lock = self.state_lock.lock();
+            // check again, another thread might have frozen memtable
+            if guard.memtable.approximate_size() > self.options.target_sst_size {
                 drop(guard); // why are we dropping the guard 
                 self.force_freeze_memtable(&lock)?;
             }
-        } 
+        }
 
         Ok(())
-
     }
 
     /// Remove a key from the storage by writing an empty value.
@@ -378,15 +378,14 @@ impl LsmStorageInner {
 
     /// Force freeze the current memtable to an immutable memtable
     pub fn force_freeze_memtable(&self, _state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
-
-        // creating memtable before acquiring the lock 
-        let new_memtable = Arc::new(MemTable::create(self.next_sst_id())) ; 
+        // creating memtable before acquiring the lock
+        let new_memtable = Arc::new(MemTable::create(self.next_sst_id()));
         {
-            let mut guard = self.state.write() ;  
-            let mut snapshot = guard.as_ref().clone() ; 
+            let mut guard = self.state.write();
+            let mut snapshot = guard.as_ref().clone();
             let frozen_memtable = std::mem::replace(&mut snapshot.memtable, new_memtable);
-            snapshot.imm_memtables.insert(0, frozen_memtable.clone()) ; 
-            *guard = Arc::new(snapshot) ;
+            snapshot.imm_memtables.insert(0, frozen_memtable.clone());
+            *guard = Arc::new(snapshot);
         }
 
         Ok(())
@@ -405,9 +404,25 @@ impl LsmStorageInner {
     /// Create an iterator over a range of keys.
     pub fn scan(
         &self,
-        _lower: Bound<&[u8]>,
-        _upper: Bound<&[u8]>,
+        lower: Bound<&[u8]>,
+        upper: Bound<&[u8]>,
     ) -> Result<FusedIterator<LsmIterator>> {
-        unimplemented!()
+        let snapshot = {
+            let guard = self.state.read();
+            Arc::clone(&guard)
+        }; // lock is dropped here 
+
+        let mut memtable_iters :Vec<Box<MemTableIterator>> = Vec::new();
+        memtable_iters.push(Box::new(snapshot.memtable.scan(lower, upper)));
+
+        for memtable in snapshot.imm_memtables.iter() { 
+            memtable_iters.push(Box::new(memtable.scan(lower, upper)));
+        }
+
+        let memtable_iters = LsmIterator::new(
+                            MergeIterator::create(memtable_iters))?;
+
+        Ok(FusedIterator::new(memtable_iters))
+
     }
 }
