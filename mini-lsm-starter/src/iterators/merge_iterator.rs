@@ -108,17 +108,16 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     }
 
     fn is_valid(&self) -> bool {
-        match self.current.as_ref() { 
-            Some(wrapper) => wrapper.1.is_valid(), 
-            None => false 
+        match self.current.as_ref() {
+            Some(wrapper) => wrapper.1.is_valid(),
+            None => false,
         }
     }
 
     fn next(&mut self) -> Result<()> {
-
         let current = self.current.as_mut().unwrap();
 
-        while let Some(mut inner_iter) = self.iters.peek_mut() { 
+        while let Some(mut inner_iter) = self.iters.peek_mut() {
             debug_assert!(
                 inner_iter.1.key() >= current.1.key(),
                 "heap invariant violated"
@@ -141,16 +140,16 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
 
         current.1.next()?;
 
-        if !current.1.is_valid() { 
-            if let Some(iter) = self.iters.pop() {  
-                *current = iter ;  
+        if !current.1.is_valid() {
+            if let Some(iter) = self.iters.pop() {
+                *current = iter;
             }
-            return Ok(())
+            return Ok(());
         }
 
-        if let Some(mut top) = self.iters.peek_mut() { 
+        if let Some(mut top) = self.iters.peek_mut() {
             if *top > *current {
-                std::mem::swap(&mut *top, current) ;
+                std::mem::swap(&mut *top, current);
             }
         }
 

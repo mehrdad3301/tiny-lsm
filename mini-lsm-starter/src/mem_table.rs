@@ -128,7 +128,6 @@ impl MemTable {
     /// Get an iterator over a range of keys.
     pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> MemTableIterator {
         let (lower, upper) = (map_bound(lower), map_bound(upper));
-        // ??? how does self-referencing and builder pattern work 
         let mut iter = MemTableIteratorBuilder {
             map: self.map.clone(),
             iter_builder: |map| map.range((lower, upper)),
@@ -176,19 +175,14 @@ pub struct MemTableIterator {
     iter: SkipMapRangeIter<'this>,
     /// Stores the current key-value pair.
     item: (Bytes, Bytes),
-} 
+}
 
-impl MemTableIterator { 
-    fn map(next: Option<Entry<'_, Bytes, Bytes>>) -> (Bytes, Bytes) { 
-        match next { 
-            Some(entry) => { 
-               return (entry.key().clone(), entry.value().clone())
-            }, 
-            None => { 
-                return (Bytes::from_static(&[]), Bytes::from_static(&[]))
-            }
+impl MemTableIterator {
+    fn map(next: Option<Entry<'_, Bytes, Bytes>>) -> (Bytes, Bytes) {
+        match next {
+            Some(entry) => return (entry.key().clone(), entry.value().clone()),
+            None => return (Bytes::from_static(&[]), Bytes::from_static(&[])),
         }
-
     }
 }
 
@@ -196,23 +190,22 @@ impl StorageIterator for MemTableIterator {
     type KeyType<'a> = KeySlice<'a>;
 
     fn value(&self) -> &[u8] {
-        // ??? as_bytes vs [..] 
-        self.borrow_item().1.as_bytes() 
+        // ??? as_bytes vs [..]
+        self.borrow_item().1.as_bytes()
     }
 
     fn key(&self) -> KeySlice {
-        // ??? as_bytes vs [..] 
+        // ??? as_bytes vs [..]
         KeySlice::from_slice(self.borrow_item().0.as_bytes())
     }
 
     fn is_valid(&self) -> bool {
-        !self.borrow_item().0.is_empty() 
+        !self.borrow_item().0.is_empty()
     }
 
     fn next(&mut self) -> Result<()> {
-
-        let item= self.with_iter_mut(|iter| MemTableIterator::map(iter.next())) ; 
-        self.with_mut(|x| *x.item = item) ; 
+        let item = self.with_iter_mut(|iter| MemTableIterator::map(iter.next()));
+        self.with_mut(|x| *x.item = item);
 
         Ok(())
     }

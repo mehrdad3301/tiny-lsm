@@ -17,7 +17,7 @@
 
 use core::panic;
 
-use anyhow::{Result, bail, anyhow};
+use anyhow::{Result, anyhow, bail};
 
 use crate::{
     iterators::{StorageIterator, merge_iterator::MergeIterator},
@@ -33,9 +33,7 @@ pub struct LsmIterator {
 
 impl LsmIterator {
     pub(crate) fn new(iter: LsmIteratorInner) -> Result<Self> {
-        let mut iter = Self {
-            inner: iter,
-        };
+        let mut iter = Self { inner: iter };
 
         while iter.inner.is_valid() && iter.inner.value().is_empty() {
             iter.inner.next()?;
@@ -49,11 +47,11 @@ impl StorageIterator for LsmIterator {
     type KeyType<'a> = &'a [u8];
 
     fn is_valid(&self) -> bool {
-        self.inner.is_valid() 
+        self.inner.is_valid()
     }
 
     fn key(&self) -> &[u8] {
-        self.inner.key().raw_ref() 
+        self.inner.key().raw_ref()
     }
 
     fn value(&self) -> &[u8] {
@@ -65,7 +63,7 @@ impl StorageIterator for LsmIterator {
         while self.inner.is_valid() && self.inner.value().is_empty() {
             self.inner.next()?;
         }
-        
+
         Ok(())
     }
 }
@@ -98,31 +96,31 @@ impl<I: StorageIterator> StorageIterator for FusedIterator<I> {
     }
 
     fn key(&self) -> Self::KeyType<'_> {
-        if !self.is_valid() { 
-            panic!("can't call key() because iterator is not valid anymore !") ;
+        if !self.is_valid() {
+            panic!("can't call key() because iterator is not valid anymore !");
         }
         self.iter.key()
     }
 
     fn value(&self) -> &[u8] {
-        if !self.is_valid() { 
-            panic!("can't call value() because iterator is not valid anymore !") ;
+        if !self.is_valid() {
+            panic!("can't call value() because iterator is not valid anymore !");
         }
         self.iter.value()
     }
 
     fn next(&mut self) -> Result<()> {
-        if self.has_errored { 
+        if self.has_errored {
             bail!("iterator can't be used, because next has errored")
         }
         if self.iter.is_valid() {
-            return match self.iter.next() { 
+            return match self.iter.next() {
                 Ok(()) => Ok(()),
                 Err(e) => {
                     self.has_errored = true;
                     Err(e)
                 }
-            }
+            };
         }
         Ok(())
     }

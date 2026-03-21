@@ -412,17 +412,15 @@ impl LsmStorageInner {
             Arc::clone(&guard)
         }; // lock is dropped here 
 
-        let mut memtable_iters :Vec<Box<MemTableIterator>> = Vec::new();
+        let mut memtable_iters: Vec<Box<MemTableIterator>> = Vec::new();
         memtable_iters.push(Box::new(snapshot.memtable.scan(lower, upper)));
 
-        for memtable in snapshot.imm_memtables.iter() { 
+        for memtable in snapshot.imm_memtables.iter() {
             memtable_iters.push(Box::new(memtable.scan(lower, upper)));
         }
 
-        let memtable_iters = LsmIterator::new(
-                            MergeIterator::create(memtable_iters))?;
+        let memtable_iters = LsmIterator::new(MergeIterator::create(memtable_iters))?;
 
         Ok(FusedIterator::new(memtable_iters))
-
     }
 }
