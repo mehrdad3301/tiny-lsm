@@ -48,12 +48,9 @@ impl BlockMeta {
     /// Encode block meta to a buffer.
     /// You may add extra fields to the buffer,
     /// in order to help keep track of `first_key` when decoding from the same buffer in the future.
-    pub fn encode_block_meta(
-        block_meta: &[BlockMeta],
-        buf: &mut Vec<u8>,
-    ) {
+    pub fn encode_block_meta(block_meta: &[BlockMeta], buf: &mut Vec<u8>) {
         buf.put_u32(block_meta.len() as u32);
-        for meta in block_meta { 
+        for meta in block_meta {
             buf.put_u32(meta.offset as u32);
             buf.put_u16(meta.first_key.len() as u16);
             buf.put_slice(meta.first_key.raw_ref());
@@ -64,20 +61,20 @@ impl BlockMeta {
 
     /// Decode block meta from a buffer.
     pub fn decode_block_meta(mut buf: impl Buf) -> Vec<BlockMeta> {
-        let mut block_meta  = vec![] ; 
+        let mut block_meta = vec![];
 
-        let num = buf.get_u32() ; 
-        for _ in 0..num { 
-            let offset = buf.get_u32() as usize ; 
-            let first_key_len = buf.get_u16() ; 
-            let first_key = KeyBytes::from_bytes(buf.copy_to_bytes(first_key_len as usize)) ;
-            let last_key_len = buf.get_u16() ; 
-            let last_key = KeyBytes::from_bytes(buf.copy_to_bytes(last_key_len as usize)) ;
+        let num = buf.get_u32();
+        for _ in 0..num {
+            let offset = buf.get_u32() as usize;
+            let first_key_len = buf.get_u16();
+            let first_key = KeyBytes::from_bytes(buf.copy_to_bytes(first_key_len as usize));
+            let last_key_len = buf.get_u16();
+            let last_key = KeyBytes::from_bytes(buf.copy_to_bytes(last_key_len as usize));
             block_meta.push(BlockMeta {
                 offset,
-                first_key, 
+                first_key,
                 last_key,
-            }); 
+            });
         }
 
         block_meta
@@ -144,29 +141,24 @@ impl SsTable {
 
     /// Open SSTable from a file.
     pub fn open(id: usize, block_cache: Option<Arc<BlockCache>>, file: FileObject) -> Result<Self> {
+        let len = file.size();
+        let size_u32 = SIZEOF_U32 as u64;
+        let block_meta_offset = file.read(len - size_u32, size_u32)?.as_slice().get_u32() as u64;
 
-        let len = file.size(); 
-        let size_u32 = SIZEOF_U32 as u64 ; 
-        let block_meta_offset = file
-                                .read(len - size_u32, size_u32)?
-                                .as_slice()
-                                .get_u32() as u64;
+        let raw_meta = file.read(block_meta_offset, len - block_meta_offset - size_u32)?;
 
-        let raw_meta = file.read(block_meta_offset, 
-                                len - block_meta_offset - size_u32)?;
+        let block_meta = BlockMeta::decode_block_meta(raw_meta.as_slice());
 
-        let block_meta = BlockMeta::decode_block_meta(raw_meta.as_slice()) ; 
-
-        Ok(Self { 
-            file, 
+        Ok(Self {
+            file,
             first_key: block_meta.first().unwrap().first_key.clone(),
             last_key: block_meta.last().unwrap().last_key.clone(),
-            block_meta_offset: block_meta_offset as usize, 
-            block_cache, 
-            id, 
+            block_meta_offset: block_meta_offset as usize,
+            block_cache,
+            id,
             block_meta,
-            bloom: None, 
-            max_ts: 0
+            bloom: None,
+            max_ts: 0,
         })
     }
 
@@ -192,24 +184,26 @@ impl SsTable {
 
     /// Read a block from the disk.
     pub fn read_block(&self, block_idx: usize) -> Result<Arc<Block>> {
-        let offset = self.block_meta[block_idx].offset ; 
+        let offset = self.block_meta[block_idx].offset;
         let offset_next = self
             .block_meta
             .get(block_idx + 1)
             .map_or(self.block_meta_offset, |x| x.offset);
 
-        let data = self.file.read(offset as u64, (offset_next - offset) as u64)?;
-        Ok(Arc::new(Block::decode(&data))) 
+        let data = self
+            .file
+            .read(offset as u64, (offset_next - offset) as u64)?;
+        Ok(Arc::new(Block::decode(&data)))
     }
 
     /// Read a block from disk, with block cache. (Day 4)
     pub fn read_block_cached(&self, block_idx: usize) -> Result<Arc<Block>> {
-        if let Some(cache) = &self.block_cache { 
+        if let Some(cache) = &self.block_cache {
             let block = cache
                 .try_get_with((self.id, block_idx), || self.read_block(block_idx))
-                .map_err(|e| anyhow!("{}", e))?; 
+                .map_err(|e| anyhow!("{}", e))?;
             Ok(block)
-        } else { 
+        } else {
             self.read_block(block_idx)
         }
     }
