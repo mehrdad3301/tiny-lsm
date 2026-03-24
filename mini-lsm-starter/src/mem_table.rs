@@ -94,7 +94,6 @@ impl MemTable {
 
     /// Get a value by key.
     pub fn get(&self, key: &[u8]) -> Option<Bytes> {
-        // TODO: get should handle delete tombstones
         Some(self.map.get(key)?.value().clone())
     }
 
@@ -139,8 +138,17 @@ impl MemTable {
     }
 
     /// Flush the mem-table to SSTable. Implement in week 1 day 6.
-    pub fn flush(&self, _builder: &mut SsTableBuilder) -> Result<()> {
-        unimplemented!()
+    pub fn flush(&self, builder: &mut SsTableBuilder) -> Result<()> {
+        let mut iter = self.scan(Bound::Unbounded, Bound::Unbounded) ; 
+        loop { 
+            if !iter.is_valid() {
+                break; 
+            }
+            builder.add(iter.key(), iter.value()) ; 
+            iter.next()? ;  
+        }    
+        
+        Ok(())
     }
 
     pub fn id(&self) -> usize {

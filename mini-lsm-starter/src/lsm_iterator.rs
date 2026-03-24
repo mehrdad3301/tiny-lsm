@@ -22,12 +22,16 @@ use anyhow::{Result, bail};
 use bytes::Bytes;
 
 use crate::{
-    iterators::{StorageIterator, merge_iterator::MergeIterator, two_merge_iterator::TwoMergeIterator},
-    mem_table::MemTableIterator, table::SsTableIterator,
+    iterators::{
+        StorageIterator, merge_iterator::MergeIterator, two_merge_iterator::TwoMergeIterator,
+    },
+    mem_table::MemTableIterator,
+    table::SsTableIterator,
 };
 
 /// Represents the internal type for an LSM iterator. This type will be changed across the course for multiple times.
-type LsmIteratorInner =  TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>;
+type LsmIteratorInner =
+    TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>;
 
 pub struct LsmIterator {
     inner: LsmIteratorInner,
@@ -38,9 +42,9 @@ pub struct LsmIterator {
 impl LsmIterator {
     pub(crate) fn new(iter: LsmIteratorInner, end_bound: Bound<Bytes>) -> Result<Self> {
         let mut iter = Self {
-            is_valid: iter.is_valid(), 
-            inner: iter, 
-            end_bound 
+            is_valid: iter.is_valid(),
+            inner: iter,
+            end_bound,
         };
 
         while iter.is_valid() && iter.inner.value().is_empty() {
@@ -54,7 +58,7 @@ impl LsmIterator {
     fn check_is_valid(&mut self) {
         if !self.inner.is_valid() {
             self.is_valid = false;
-            return ; 
+            return;
         }
         match self.end_bound.as_ref() {
             Bound::Unbounded => {}
@@ -68,7 +72,7 @@ impl StorageIterator for LsmIterator {
     type KeyType<'a> = &'a [u8];
 
     fn is_valid(&self) -> bool {
-        self.is_valid 
+        self.is_valid
     }
 
     fn key(&self) -> &[u8] {
@@ -88,6 +92,9 @@ impl StorageIterator for LsmIterator {
         }
 
         Ok(())
+    }
+    fn num_active_iterators(&self) -> usize {
+        self.inner.num_active_iterators()
     }
 }
 
@@ -146,5 +153,9 @@ impl<I: StorageIterator> StorageIterator for FusedIterator<I> {
             };
         }
         Ok(())
+    }
+
+    fn num_active_iterators(&self) -> usize {
+        self.iter.num_active_iterators()
     }
 }
