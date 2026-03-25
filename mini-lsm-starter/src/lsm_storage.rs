@@ -26,6 +26,8 @@ use anyhow::{Context, Result};
 use bytes::{Buf, Bytes};
 use parking_lot::{Mutex, MutexGuard, RwLock};
 
+use farmhash ;
+
 use crate::block::Block;
 use crate::compact::{
     CompactionController, CompactionOptions, LeveledCompactionController, LeveledCompactionOptions,
@@ -205,9 +207,9 @@ impl Drop for MiniLsm {
 
 impl MiniLsm {
     pub fn close(&self) -> Result<()> {
-        self.flush_notifier.send(())? ; 
+        self.flush_notifier.send(())?;
         let mut flush_thread = self.flush_thread.lock();
-        if let Some(flush_thread)= flush_thread.take()  {
+        if let Some(flush_thread) = flush_thread.take() {
             flush_thread
                 .join()
                 .map_err(|e| anyhow::anyhow!("{:?}", e))?;
@@ -300,7 +302,7 @@ impl LsmStorageInner {
     pub(crate) fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Self> {
         let path = path.as_ref();
         let state = LsmStorageState::create(&options);
-    
+
         let compaction_controller = match &options.compaction_options {
             CompactionOptions::Leveled(options) => {
                 CompactionController::Leveled(LeveledCompactionController::new(options.clone()))
@@ -371,9 +373,17 @@ impl LsmStorageInner {
         let key = KeySlice::from_slice(key);
         for sstable in snapshot.l0_sstables.iter() {
             let sstable = snapshot.sstables.get(sstable).unwrap();
-            if !key_within(key.raw_ref(), 
-            sstable.first_key().as_key_slice(), sstable.last_key().as_key_slice()) { 
-                continue ; 
+            if !key_within(
+                key.raw_ref(),
+                sstable.first_key().as_key_slice(),
+                sstable.last_key().as_key_slice(),
+            ) {
+                continue;
+            } 
+            if let Some(bloom_filter) = &sstable.bloom { 
+                if !bloom_filter.may_contain(farmhash::fingerprint32(key.raw_ref())) { 
+                    continue ; 
+                }
             }
             let iter = SsTableIterator::create_and_seek_to_key(sstable.clone(), key)?;
             if iter.is_valid() && iter.key() == key {
@@ -454,32 +464,30 @@ impl LsmStorageInner {
 
     /// Force flush the earliest-created immutable memtable to disk
     pub fn force_flush_next_imm_memtable(&self) -> Result<()> {
-
-        /// ??? why do we need state lock here ? 
-        let lock = self.state_lock.lock() ;
+        /// ??? why do we need state lock here ?
+        let lock = self.state_lock.lock();
         let memtable = {
             let guard = self.state.read();
-            guard.imm_memtables
+            guard
+                .imm_memtables
                 .last()
                 .expect("no immutable memtables found during the flush")
-                .clone() 
+                .clone()
         }; // lock is dropped here 
 
-        let id = memtable.id() ;
-        let mut builder = SsTableBuilder::new(self.options.block_size); 
-        memtable.flush(&mut builder)? ; 
-        let table = builder
-            .build(id, Some(self.block_cache.clone()), self.path_of_sst(id))? ; 
+        let id = memtable.id();
+        let mut builder = SsTableBuilder::new(self.options.block_size);
+        memtable.flush(&mut builder)?;
+        let table = builder.build(id, Some(self.block_cache.clone()), self.path_of_sst(id))?;
 
         let mut guard = self.state.write();
         let mut snapshot = guard.as_ref().clone();
-        snapshot.l0_sstables.insert(0, id) ; 
-        snapshot.sstables.insert(id, Arc::new(table)) ; 
-        snapshot.imm_memtables.pop() ; 
+        snapshot.l0_sstables.insert(0, id);
+        snapshot.sstables.insert(id, Arc::new(table));
+        snapshot.imm_memtables.pop();
         *guard = Arc::new(snapshot);
 
         Ok(())
-        
     }
 
     pub fn new_txn(&self) -> Result<()> {

@@ -139,15 +139,15 @@ impl MemTable {
 
     /// Flush the mem-table to SSTable. Implement in week 1 day 6.
     pub fn flush(&self, builder: &mut SsTableBuilder) -> Result<()> {
-        let mut iter = self.scan(Bound::Unbounded, Bound::Unbounded) ; 
-        loop { 
+        let mut iter = self.scan(Bound::Unbounded, Bound::Unbounded);
+        loop {
             if !iter.is_valid() {
-                break; 
+                break;
             }
-            builder.add(iter.key(), iter.value()) ; 
-            iter.next()? ;  
-        }    
-        
+            builder.add(iter.key(), iter.value());
+            iter.next()?;
+        }
+
         Ok(())
     }
 

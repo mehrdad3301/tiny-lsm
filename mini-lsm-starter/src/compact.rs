@@ -166,7 +166,7 @@ impl LsmStorageInner {
             guard.imm_memtables.len()
         }; // lock is dropped here 
 
-        if imm_memtables_len >= self.options.num_memtable_limit { 
+        if imm_memtables_len >= self.options.num_memtable_limit {
             self.force_flush_next_imm_memtable()?
         }
 
