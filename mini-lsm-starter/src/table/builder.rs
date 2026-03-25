@@ -15,15 +15,15 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
+use std::path::Path;
 use std::sync::Arc;
-use std::{path::Path};
 
-use farmhash ; 
+use farmhash;
 
 use anyhow::Result;
-use bytes::{BufMut};
+use bytes::BufMut;
 
-use super::{BlockMeta, SsTable, Bloom};
+use super::{BlockMeta, Bloom, SsTable};
 use crate::{
     block::BlockBuilder,
     key::{KeySlice, KeyVec},
@@ -31,7 +31,7 @@ use crate::{
     table::FileObject,
 };
 
-const BLOOM_FILTER_FALSE_POSITIVE_RATE: f64 = 0.01 ; 
+const BLOOM_FILTER_FALSE_POSITIVE_RATE: f64 = 0.01;
 
 /// Builds an SSTable from key-value pairs.
 pub struct SsTableBuilder {
@@ -69,7 +69,7 @@ impl SsTableBuilder {
 
         if self.builder.add(key, value) {
             self.last_key.set_from_slice(key);
-            self.key_hashes.push(farmhash::fingerprint32(key.raw_ref())) ; 
+            self.key_hashes.push(farmhash::fingerprint32(key.raw_ref()));
             return;
         }
 
@@ -78,7 +78,7 @@ impl SsTableBuilder {
         assert!(self.builder.add(key, value));
         self.last_key.set_from_slice(key);
         self.first_key.set_from_slice(key);
-        self.key_hashes.push(farmhash::fingerprint32(key.raw_ref())) ; 
+        self.key_hashes.push(farmhash::fingerprint32(key.raw_ref()));
     }
 
     fn add_block(&mut self) {
@@ -113,11 +113,10 @@ impl SsTableBuilder {
 
         let bloom_filter = Bloom::build_from_key_hashes(
             &self.key_hashes,
-            Bloom::bloom_bits_per_key(
-                self.key_hashes.len(), 
-                BLOOM_FILTER_FALSE_POSITIVE_RATE)) ;
+            Bloom::bloom_bits_per_key(self.key_hashes.len(), BLOOM_FILTER_FALSE_POSITIVE_RATE),
+        );
 
-        let bloom_filter_offset = self.data.len() ;
+        let bloom_filter_offset = self.data.len();
         bloom_filter.encode(&mut self.data);
         self.data.put_u32(bloom_filter_offset as u32);
 

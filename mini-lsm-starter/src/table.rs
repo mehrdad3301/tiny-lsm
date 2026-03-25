@@ -143,23 +143,22 @@ impl SsTable {
     pub fn open(id: usize, block_cache: Option<Arc<BlockCache>>, file: FileObject) -> Result<Self> {
         let len = file.size();
         let size_u32 = SIZEOF_U32 as u64;
-        let bloom_filter_offset = file
-                            .read(len - size_u32, size_u32)?
-                            .as_slice()
-                            .get_u32() as u64;
+        let bloom_filter_offset = file.read(len - size_u32, size_u32)?.as_slice().get_u32() as u64;
 
-        let bloom_filter= Bloom::decode(
-            file
-            .read(bloom_filter_offset, len - bloom_filter_offset - size_u32)?
-            .as_slice())?;
+        let bloom_filter = Bloom::decode(
+            file.read(bloom_filter_offset, len - bloom_filter_offset - size_u32)?
+                .as_slice(),
+        )?;
 
         let block_meta_offset = file
             .read(bloom_filter_offset - size_u32, size_u32)?
             .as_slice()
             .get_u32() as u64;
 
-        let raw_meta = file
-            .read(block_meta_offset, bloom_filter_offset - block_meta_offset - size_u32)?;
+        let raw_meta = file.read(
+            block_meta_offset,
+            bloom_filter_offset - block_meta_offset - size_u32,
+        )?;
 
         let block_meta = BlockMeta::decode_block_meta(raw_meta.as_slice());
 

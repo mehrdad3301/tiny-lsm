@@ -30,8 +30,7 @@ pub struct BlockBuilder {
     block_size: usize,
     /// The first key in the block
     first_key: KeyVec,
-} 
-
+}
 
 impl BlockBuilder {
     /// Creates a new block builder.
@@ -44,16 +43,14 @@ impl BlockBuilder {
         }
     }
 
-    fn key_overlap_len(&self, key: KeySlice) -> usize { 
+    fn key_overlap_len(&self, key: KeySlice) -> usize {
+        let mut idx: usize = 0;
 
-        let mut idx: usize = 0 ; 
-
-        while idx < self.first_key.raw_ref().len() 
-            && idx < key.raw_ref().len() { 
-            if self.first_key.raw_ref()[idx] != key.raw_ref()[idx] { 
-                break ;
+        while idx < self.first_key.raw_ref().len() && idx < key.raw_ref().len() {
+            if self.first_key.raw_ref()[idx] != key.raw_ref()[idx] {
+                break;
             }
-            idx += 1 ;
+            idx += 1;
         }
         idx
     }
@@ -81,9 +78,9 @@ impl BlockBuilder {
 
         let mut buf = vec![];
 
-        let key_overlap_len = self.key_overlap_len(key) ;
+        let key_overlap_len = self.key_overlap_len(key);
 
-        buf.put_u16(key_overlap_len as u16) ; 
+        buf.put_u16(key_overlap_len as u16);
 
         buf.put_u16((key.len() - key_overlap_len) as u16);
         buf.put_slice(&key.raw_ref()[key_overlap_len..]);

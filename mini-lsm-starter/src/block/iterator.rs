@@ -111,7 +111,7 @@ impl BlockIterator {
         let key_len = entry.get_u16() as usize;
 
         self.key.clear();
-        self.key.append(&self.first_key.raw_ref()[..overlap_len]) ;
+        self.key.append(&self.first_key.raw_ref()[..overlap_len]);
         self.key.append(&entry[..key_len]);
 
         entry.advance(key_len);
