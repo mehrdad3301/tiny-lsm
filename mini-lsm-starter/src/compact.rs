@@ -131,29 +131,27 @@ pub enum CompactionOptions {
 }
 
 impl LsmStorageInner {
-    /// ??? what is the following syntax ? vs StorageIterator 
+    /// ??? what is the following syntax ? vs StorageIterator
     fn create_ssts_from_iter(
-        &self, 
-        mut iter: impl for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>, 
-        compact_to_bottom: bool, 
-    ) -> Result<Vec<Arc<SsTable>>> { 
+        &self,
+        mut iter: impl for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>,
+        compact_to_bottom: bool,
+    ) -> Result<Vec<Arc<SsTable>>> {
         let mut builder = SsTableBuilder::new(self.options.block_size);
         let mut sstables = Vec::new();
 
         while iter.is_valid() {
-            if compact_to_bottom { 
+            if compact_to_bottom {
                 if !iter.value().is_empty() {
                     builder.add(iter.key(), iter.value());
                 }
-            } else { 
+            } else {
                 builder.add(iter.key(), iter.value());
             }
             if builder.estimated_size() > self.options.target_sst_size {
                 let id = self.next_sst_id();
-                let ready_builder = std::mem::replace(
-                    &mut builder,
-                    SsTableBuilder::new(self.options.block_size),
-                );
+                let ready_builder =
+                    std::mem::replace(&mut builder, SsTableBuilder::new(self.options.block_size));
                 sstables.push(Arc::new(ready_builder.build(
                     id,
                     Some(self.block_cache.clone()),
@@ -172,7 +170,6 @@ impl LsmStorageInner {
         )?));
 
         Ok(sstables)
-
     }
 
     fn compact(&self, task: &CompactionTask) -> Result<Vec<Arc<SsTable>>> {
@@ -182,15 +179,14 @@ impl LsmStorageInner {
         };
 
         match task {
-            CompactionTask::Simple(SimpleLeveledCompactionTask{ 
-                upper_level, 
-                lower_level, 
-                upper_level_sst_ids, 
+            CompactionTask::Simple(SimpleLeveledCompactionTask {
+                upper_level,
+                lower_level,
+                upper_level_sst_ids,
                 lower_level_sst_ids,
                 is_lower_level_bottom_level,
-            }) => {  
-                if let Some(_) = upper_level { 
-
+            }) => {
+                if let Some(_) = upper_level {
                     let mut sstables = Vec::with_capacity(upper_level_sst_ids.len());
                     for id in upper_level_sst_ids.iter() {
                         let table = snapshot.sstables.get(id).unwrap().clone();
@@ -206,12 +202,10 @@ impl LsmStorageInner {
 
                     let lower_iter = SstConcatIterator::create_and_seek_to_first(sstables)?;
 
-                    let iter = TwoMergeIterator::create(upper_iter, lower_iter)? ;
+                    let iter = TwoMergeIterator::create(upper_iter, lower_iter)?;
                     self.create_ssts_from_iter(iter, task.compact_to_bottom_level())
-
-                } else { 
-
-                    let mut iters = Vec::with_capacity(upper_level_sst_ids.len()) ; 
+                } else {
+                    let mut iters = Vec::with_capacity(upper_level_sst_ids.len());
                     for table in upper_level_sst_ids.iter() {
                         if let Some(table) = snapshot.sstables.get(table) {
                             iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
@@ -219,7 +213,7 @@ impl LsmStorageInner {
                             )?));
                         }
                     }
-                    let upper_iter = MergeIterator::create(iters) ; 
+                    let upper_iter = MergeIterator::create(iters);
 
                     let mut sstables = Vec::with_capacity(lower_level_sst_ids.len());
                     for id in lower_level_sst_ids {
@@ -229,35 +223,32 @@ impl LsmStorageInner {
 
                     let lower_iter = SstConcatIterator::create_and_seek_to_first(sstables)?;
 
-                    let iter = TwoMergeIterator::create(upper_iter, lower_iter)? ;
+                    let iter = TwoMergeIterator::create(upper_iter, lower_iter)?;
                     self.create_ssts_from_iter(iter, task.compact_to_bottom_level())
-
-                } 
+                }
             }
 
-            CompactionTask::Tiered(TieredCompactionTask{ 
-                tiers, 
-                ..
-            }) => { 
-                let mut iters = Vec::with_capacity(tiers.len()) ; 
-                for (tier_id, sstable_ids) in tiers { 
+            CompactionTask::Tiered(TieredCompactionTask { tiers, .. }) => {
+                let mut iters = Vec::with_capacity(tiers.len());
+                for (tier_id, sstable_ids) in tiers {
                     let mut sstables = Vec::with_capacity(sstable_ids.len());
                     for id in sstable_ids {
                         let table = snapshot.sstables.get(id).unwrap().clone();
                         sstables.push(table);
-                    }  
-                    iters.push(Box::new(SstConcatIterator::create_and_seek_to_first(sstables)?))
+                    }
+                    iters.push(Box::new(SstConcatIterator::create_and_seek_to_first(
+                        sstables,
+                    )?))
                 }
-                let iters = MergeIterator::create(iters) ;
-                self.create_ssts_from_iter(iters, task.compact_to_bottom_level()) 
-            },
+                let iters = MergeIterator::create(iters);
+                self.create_ssts_from_iter(iters, task.compact_to_bottom_level())
+            }
             CompactionTask::Leveled(_) => unimplemented!(),
             CompactionTask::ForceFullCompaction {
                 l0_sstables,
                 l1_sstables,
             } => {
-
-                let mut iters = Vec::with_capacity(l0_sstables.len()) ; 
+                let mut iters = Vec::with_capacity(l0_sstables.len());
                 for table in l0_sstables.iter() {
                     if let Some(table) = snapshot.sstables.get(table) {
                         iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
@@ -265,7 +256,7 @@ impl LsmStorageInner {
                         )?));
                     }
                 }
-                let upper_iter = MergeIterator::create(iters) ; 
+                let upper_iter = MergeIterator::create(iters);
 
                 let mut sstables = Vec::with_capacity(l1_sstables.len());
                 for id in l1_sstables {
@@ -275,7 +266,7 @@ impl LsmStorageInner {
 
                 let lower_iter = SstConcatIterator::create_and_seek_to_first(sstables)?;
 
-                let iter = TwoMergeIterator::create(upper_iter, lower_iter)? ;
+                let iter = TwoMergeIterator::create(upper_iter, lower_iter)?;
                 self.create_ssts_from_iter(iter, task.compact_to_bottom_level())
             }
         }
@@ -329,36 +320,40 @@ impl LsmStorageInner {
         let snapshot = {
             let guard = self.state.read();
             guard.clone()
-        }; 
-        
-        if let Some(task) = self.compaction_controller.generate_compaction_task(&snapshot) { 
-            let generated_sstables = self.compact(&task)? ; 
+        };
+
+        if let Some(task) = self
+            .compaction_controller
+            .generate_compaction_task(&snapshot)
+        {
+            let generated_sstables = self.compact(&task)?;
             let generated_sstable_ids = generated_sstables
                 .iter()
                 .map(|x| x.sst_id())
-                .collect::<Vec<_>>() ; 
+                .collect::<Vec<_>>();
 
             let sstables_to_remove = {
                 let lock = self.state_lock.lock();
                 let snapshot = self.state.read().as_ref().clone();
 
-                let (mut snapshot, sstables_to_remove) = self.compaction_controller
-                    .apply_compaction_result(&snapshot, &task, &generated_sstable_ids, false) ;
+                let (mut snapshot, sstables_to_remove) = self
+                    .compaction_controller
+                    .apply_compaction_result(&snapshot, &task, &generated_sstable_ids, false);
 
-                    for table in generated_sstables {
-                        let result = snapshot.sstables.insert(table.sst_id(), table);
-                        assert!(result.is_none()) ;
-                    }
+                for table in generated_sstables {
+                    let result = snapshot.sstables.insert(table.sst_id(), table);
+                    assert!(result.is_none());
+                }
 
-                    for table_id in sstables_to_remove.iter() {
-                        let result = snapshot.sstables.remove(table_id);
-                        assert!(result.is_some()) ;
-                    }
+                for table_id in sstables_to_remove.iter() {
+                    let result = snapshot.sstables.remove(table_id);
+                    assert!(result.is_some());
+                }
 
-                    *self.state.write() = Arc::new(snapshot);
+                *self.state.write() = Arc::new(snapshot);
 
                 sstables_to_remove
-            } ;
+            };
 
             println!(
                 "compaction finished: {} files removed, {} files added, output={:?}",
@@ -370,11 +365,9 @@ impl LsmStorageInner {
             for table_id in sstables_to_remove.iter() {
                 std::fs::remove_file(self.path_of_sst(*table_id))?;
             }
-
         }
-        
+
         Ok(())
-    
     }
 
     pub(crate) fn spawn_compaction_thread(

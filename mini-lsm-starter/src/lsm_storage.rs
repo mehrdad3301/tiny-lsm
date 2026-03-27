@@ -441,12 +441,12 @@ impl LsmStorageInner {
         guard.memtable.put(_key, _value)?;
 
         if guard.memtable.approximate_size() > self.options.target_sst_size {
-            drop(guard); 
+            drop(guard);
             let lock = self.state_lock.lock();
             let guard = self.state.read();
             // check again, another thread might have frozen memtable
             if guard.memtable.approximate_size() > self.options.target_sst_size {
-                drop(guard); 
+                drop(guard);
                 self.force_freeze_memtable(&lock)?;
             }
         }
@@ -515,7 +515,11 @@ impl LsmStorageInner {
 
         let mut guard = self.state.write();
         let mut snapshot = guard.as_ref().clone();
-        snapshot.l0_sstables.insert(0, id);
+        if self.compaction_controller.flush_to_l0() {
+            snapshot.l0_sstables.insert(0, id);
+        } else {
+            snapshot.levels.insert(0, (id, vec![id]));
+        }
         snapshot.sstables.insert(id, Arc::new(table));
         snapshot.imm_memtables.pop();
         *guard = Arc::new(snapshot);
