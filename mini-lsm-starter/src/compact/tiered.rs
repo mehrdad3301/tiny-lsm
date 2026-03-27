@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -46,8 +46,13 @@ impl TieredCompactionController {
         &self,
         snapshot: &LsmStorageState,
     ) -> Option<TieredCompactionTask> {
-
-        // check if levels is not empty 
+        assert!(
+            snapshot.l0_sstables.is_empty(),
+            "should not add l0 ssts in tiered compaction"
+        );
+        if snapshot.levels.len() < self.options.num_tiers {
+            return None;
+        }
 
         // trigger by space amplification ratio
         let all_levels_size = snapshot
@@ -69,9 +74,23 @@ impl TieredCompactionController {
         }
 
         // trigger by size ratio 
+        let size_ratio = (100 + self.options.size_ratio) as f64 / 100.0 ; 
+        let mut some_of_previous_tiers = snapshot.levels.first().unwrap().1.len(); 
+        for (idx, (_, tier)) in snapshot.levels.iter().enumerate() { 
+            if idx == 0 { 
+                continue ;
+            }
+            if tier.len() as f64 / some_of_previous_tiers as f64 > size_ratio  
+                && idx >= self.options.min_merge_width { 
+                    return Some(TieredCompactionTask { 
+                        tiers: snapshot.levels[..idx].to_vec(), 
+                        bottom_tier_included: false, 
+                }) 
+            } 
+            some_of_previous_tiers += tier.len() ; 
+        }
 
         // reduce sorted runs 
-
         None 
     }
 
@@ -82,34 +101,38 @@ impl TieredCompactionController {
         output: &[usize],
     ) -> (LsmStorageState, Vec<usize>) {
 
-        // assert that output is not empty 
 
         let mut snapshot = snapshot.clone() ;
 
         let mut files_to_remove: Vec<usize> = Vec::new() ; 
 
-        let mut deleted_tier_ids = task 
+        let mut deleted_tiers = task 
             .tiers
             .iter()
-            .map(|x| &x.0) 
-            .copied()
-            .collect::<HashSet<_>>() ; 
+            .map(|(x, y)| (*x, y)) 
+            .collect::<HashMap<_, _>>() ; 
 
-        files_to_remove.extend(deleted_tier_ids.iter()) ;
+        let mut remaining_tiers = Vec::new() ; 
 
-        let mut remaining_tiers = Vec::with_capacity(
-            snapshot.levels.len() - files_to_remove.len()
-        ) ; 
-
+        let mut new_tier_added = false;
         for tier in snapshot.levels { 
-            if !deleted_tier_ids.remove(&tier.0) { 
+            if let Some(file) = deleted_tiers.remove(&tier.0) { 
+                files_to_remove.extend(file.iter().copied());
+            } else { 
                 remaining_tiers.push(tier.clone()) ;
+            } 
+
+            if !new_tier_added && deleted_tiers.is_empty() { 
+                new_tier_added = true ; 
+                remaining_tiers.push((output[0], output.to_vec())) ;
             }
         } 
 
-        snapshot.levels = remaining_tiers ; 
+        if !deleted_tiers.is_empty() {
+            unreachable!("some tiers not found??");
+        }
 
-        snapshot.levels.push((output[0], output.to_vec())) ;
+        snapshot.levels = remaining_tiers ; 
 
         (snapshot, files_to_remove)
     }
