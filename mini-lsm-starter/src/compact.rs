@@ -135,12 +135,17 @@ impl LsmStorageInner {
     fn create_ssts_from_iter(
         &self, 
         mut iter: impl for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>, 
+        compact_to_bottom: bool, 
     ) -> Result<Vec<Arc<SsTable>>> { 
         let mut builder = SsTableBuilder::new(self.options.block_size);
         let mut sstables = Vec::new();
 
         while iter.is_valid() {
-            if !iter.value().is_empty() {
+            if compact_to_bottom { 
+                if !iter.value().is_empty() {
+                    builder.add(iter.key(), iter.value());
+                }
+            } else { 
                 builder.add(iter.key(), iter.value());
             }
             if builder.estimated_size() > self.options.target_sst_size {
@@ -202,7 +207,7 @@ impl LsmStorageInner {
                     let lower_iter = SstConcatIterator::create_and_seek_to_first(sstables)?;
 
                     let iter = TwoMergeIterator::create(upper_iter, lower_iter)? ;
-                    self.create_ssts_from_iter(iter)
+                    self.create_ssts_from_iter(iter, task.compact_to_bottom_level())
 
                 } else { 
 
@@ -225,14 +230,14 @@ impl LsmStorageInner {
                     let lower_iter = SstConcatIterator::create_and_seek_to_first(sstables)?;
 
                     let iter = TwoMergeIterator::create(upper_iter, lower_iter)? ;
-                    self.create_ssts_from_iter(iter)
+                    self.create_ssts_from_iter(iter, task.compact_to_bottom_level())
 
                 } 
             }
 
             CompactionTask::Tiered(TieredCompactionTask{ 
                 tiers, 
-                bottom_tier_included,
+                ..
             }) => { 
                 let mut iters = Vec::with_capacity(tiers.len()) ; 
                 for (tier_id, sstable_ids) in tiers { 
@@ -244,7 +249,7 @@ impl LsmStorageInner {
                     iters.push(Box::new(SstConcatIterator::create_and_seek_to_first(sstables)?))
                 }
                 let iters = MergeIterator::create(iters) ;
-                self.create_ssts_from_iter(iters) 
+                self.create_ssts_from_iter(iters, task.compact_to_bottom_level()) 
             },
             CompactionTask::Leveled(_) => unimplemented!(),
             CompactionTask::ForceFullCompaction {
@@ -271,7 +276,7 @@ impl LsmStorageInner {
                 let lower_iter = SstConcatIterator::create_and_seek_to_first(sstables)?;
 
                 let iter = TwoMergeIterator::create(upper_iter, lower_iter)? ;
-                self.create_ssts_from_iter(iter)
+                self.create_ssts_from_iter(iter, task.compact_to_bottom_level())
             }
         }
     }
