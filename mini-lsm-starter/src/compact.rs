@@ -169,70 +169,6 @@ impl LsmStorageInner {
         Ok(sstables)
 
     }
-    fn fully_compact_two_levels(&self, 
-        upper_level: usize, 
-        lower_level: usize, 
-        upper_level_ids: &Vec<usize>, 
-        lower_level_ids: &Vec<usize>
-    ) -> Result<Vec<Arc<SsTable>>> { 
-
-        let snapshot = {
-            let guard = self.state.read();
-            guard.clone()
-        };
-
-        let mut iters = Vec::with_capacity(upper_level_ids.len()) ; 
-        for table in upper_level_ids.iter() {
-            if let Some(table) = snapshot.sstables.get(table) {
-                iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
-                    Arc::clone(table),
-                )?));
-            }
-        }
-        let upper_iter = MergeIterator::create(iters) ; 
-
-        let mut sstables = Vec::with_capacity(lower_level_ids.len());
-        for id in lower_level_ids {
-            let table = snapshot.sstables.get(id).unwrap().clone();
-            sstables.push(table);
-        }
-
-        let lower_iter = SstConcatIterator::create_and_seek_to_first(sstables)?;
-
-        // create iterators 
-        let mut iter = TwoMergeIterator::create(upper_iter, lower_iter)? ;
-        let mut builder = SsTableBuilder::new(self.options.block_size);
-        let mut sstables = Vec::new();
-
-        while iter.is_valid() {
-            if !iter.value().is_empty() {
-                builder.add(iter.key(), iter.value());
-            }
-            if builder.estimated_size() > self.options.target_sst_size {
-                let id = self.next_sst_id();
-                let ready_builder = std::mem::replace(
-                    &mut builder,
-                    SsTableBuilder::new(self.options.block_size),
-                );
-                sstables.push(Arc::new(ready_builder.build(
-                    id,
-                    Some(self.block_cache.clone()),
-                    self.path_of_sst(id),
-                )?));
-            }
-            iter.next()?;
-        }
-
-        // create sstable from remaining elements
-        let id = self.next_sst_id();
-        sstables.push(Arc::new(builder.build(
-            id,
-            Some(self.block_cache.clone()),
-            self.path_of_sst(id),
-        )?));
-
-        Ok(sstables)
-    }
 
     fn compact(&self, task: &CompactionTask) -> Result<Vec<Arc<SsTable>>> {
         let snapshot = {
@@ -294,7 +230,22 @@ impl LsmStorageInner {
                 } 
             }
 
-            CompactionTask::Tiered(_) => unimplemented!(),
+            CompactionTask::Tiered(TieredCompactionTask{ 
+                tiers, 
+                bottom_tier_included,
+            }) => { 
+                let mut iters = Vec::with_capacity(tiers.len()) ; 
+                for (tier_id, sstable_ids) in tiers { 
+                    let mut sstables = Vec::with_capacity(sstable_ids.len());
+                    for id in sstable_ids {
+                        let table = snapshot.sstables.get(id).unwrap().clone();
+                        sstables.push(table);
+                    }  
+                    iters.push(Box::new(SstConcatIterator::create_and_seek_to_first(sstables)?))
+                }
+                let iters = MergeIterator::create(iters) ;
+                self.create_ssts_from_iter(iters) 
+            },
             CompactionTask::Leveled(_) => unimplemented!(),
             CompactionTask::ForceFullCompaction {
                 l0_sstables,
