@@ -138,7 +138,7 @@ impl StorageIterator for SstConcatIterator {
                 self.next_sst_idx += 1;
             } else {
                 self.current = None;
-                break; 
+                break;
             }
         }
         Ok(())
