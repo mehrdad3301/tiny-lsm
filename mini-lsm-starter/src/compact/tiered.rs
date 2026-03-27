@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{HashMap, HashSet};
+use std::{cmp::max, collections::HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -90,8 +90,16 @@ impl TieredCompactionController {
             some_of_previous_tiers += tier.len() ; 
         }
 
-        // reduce sorted runs 
-        None 
+        // triggered by reducing sorted runs 
+        let idx = self.options.max_merge_width
+            .unwrap_or(std::usize::MAX)
+            .min(snapshot.levels.len()) ; 
+
+        Some(TieredCompactionTask { 
+            tiers: snapshot.levels[..idx].to_vec(), 
+            bottom_tier_included: idx == snapshot.levels.len() - 1  
+        })
+
     }
 
     pub fn apply_compaction_result(
