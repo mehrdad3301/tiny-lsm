@@ -162,12 +162,14 @@ impl LsmStorageInner {
         }
 
         // create sstable from remaining elements
-        let id = self.next_sst_id();
-        sstables.push(Arc::new(builder.build(
-            id,
-            Some(self.block_cache.clone()),
-            self.path_of_sst(id),
-        )?));
+        if !builder.is_empty() {
+            let id = self.next_sst_id();
+            sstables.push(Arc::new(builder.build(
+                id,
+                Some(self.block_cache.clone()),
+                self.path_of_sst(id),
+            )?));
+        }
 
         Ok(sstables)
     }
@@ -202,7 +204,7 @@ impl LsmStorageInner {
                     let upper_iter = SstConcatIterator::create_and_seek_to_first(sstables)?;
 
                     let mut sstables = Vec::with_capacity(lower_level_sst_ids.len());
-                    for id in lower_level_sst_ids {
+                    for id in lower_level_sst_ids.iter() {
                         let table = snapshot.sstables.get(id).unwrap().clone();
                         sstables.push(table);
                     }
@@ -223,7 +225,7 @@ impl LsmStorageInner {
                     let upper_iter = MergeIterator::create(iters);
 
                     let mut sstables = Vec::with_capacity(lower_level_sst_ids.len());
-                    for id in lower_level_sst_ids {
+                    for id in lower_level_sst_ids.iter() {
                         let table = snapshot.sstables.get(id).unwrap().clone();
                         sstables.push(table);
                     }
@@ -340,16 +342,17 @@ impl LsmStorageInner {
 
             let sstables_to_remove = {
                 let lock = self.state_lock.lock();
-                let snapshot = self.state.read().as_ref().clone();
-
-                let (mut snapshot, sstables_to_remove) = self
-                    .compaction_controller
-                    .apply_compaction_result(&snapshot, &task, &generated_sstable_ids, false);
-
+                let mut snapshot = self.state.read().as_ref().clone();
+                /// ??? what happens to the readers when we modify snapshot ???
+                
                 for table in generated_sstables {
                     let result = snapshot.sstables.insert(table.sst_id(), table);
                     assert!(result.is_none());
                 }
+
+                let (mut snapshot, sstables_to_remove) = self
+                    .compaction_controller
+                    .apply_compaction_result(&snapshot, &task, &generated_sstable_ids, false);
 
                 for table_id in sstables_to_remove.iter() {
                     let result = snapshot.sstables.remove(table_id);

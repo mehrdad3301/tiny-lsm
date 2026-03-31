@@ -121,6 +121,7 @@ impl LeveledCompactionController {
                 base_level = level + 1 ; 
             }
         }
+        dbg!(base_level) ; 
 
         // flush l0 if necessary 
         if snapshot.l0_sstables.len() >= self.options.level0_file_num_compaction_trigger {
@@ -230,7 +231,6 @@ impl LeveledCompactionController {
         snapshot.levels[task.lower_level - 1].1.extend(output) ; 
         
         // sort sstables in lower level after adding new sst 
-
         snapshot.levels[task.lower_level - 1].1
             .sort_by(|x, y| {
                 snapshot
