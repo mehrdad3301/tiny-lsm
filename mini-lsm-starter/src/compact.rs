@@ -39,6 +39,7 @@ use crate::iterators::merge_iterator::MergeIterator;
 use crate::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::key::KeySlice;
 use crate::lsm_storage::{LsmStorageInner, LsmStorageState};
+use crate::manifest::ManifestRecord;
 use crate::table::{self, SsTable, SsTableBuilder, SsTableIterator};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -286,16 +287,22 @@ impl LsmStorageInner {
             (guard.l0_sstables.clone(), guard.levels[0].1.clone())
         }; // lock is dropped here 
 
-        let l1_sstables = self.compact(&CompactionTask::ForceFullCompaction {
+        let task = CompactionTask::ForceFullCompaction {
             l0_sstables: ssts_to_compact.0.clone(),
             l1_sstables: ssts_to_compact.1.clone(),
-        })?;
+        } ; 
+
+        let generated_sstables = self.compact(&task)?;
+        let generated_sstable_ids = generated_sstables
+            .iter()
+            .map(|x| x.sst_id())
+            .collect::<Vec<_>>();
 
         {
             let lock = self.state_lock.lock();
             let mut snapshot = self.state.read().as_ref().clone();
-            snapshot.levels[0].1 = Vec::with_capacity(l1_sstables.len());
-            for table in l1_sstables {
+            snapshot.levels[0].1 = Vec::with_capacity(generated_sstables.len());
+            for table in generated_sstables {
                 snapshot.levels[0].1.push(table.sst_id());
                 snapshot.sstables.insert(table.sst_id(), table);
             }
@@ -315,11 +322,18 @@ impl LsmStorageInner {
                 .collect();
 
             *self.state.write() = Arc::new(snapshot);
+            self.sync_dir()?; 
+            self.manifest
+                .as_ref()
+                .unwrap()
+                .add_record(&lock, ManifestRecord::Compaction(task, generated_sstable_ids))? ; 
         }
 
         for table_id in ssts_to_compact.0.iter().chain(ssts_to_compact.1.iter()) {
             std::fs::remove_file(self.path_of_sst(*table_id))?;
-        }
+        } 
+
+        self.sync_dir()?;
 
         Ok(())
     }
@@ -344,7 +358,6 @@ impl LsmStorageInner {
                 let lock = self.state_lock.lock();
                 let mut snapshot = self.state.read().as_ref().clone();
                 /// ??? what happens to the readers when we modify snapshot ???
-                
                 for table in generated_sstables {
                     let result = snapshot.sstables.insert(table.sst_id(), table);
                     assert!(result.is_none());
@@ -361,6 +374,14 @@ impl LsmStorageInner {
 
                 *self.state.write() = Arc::new(snapshot);
 
+                self.sync_dir()? ; 
+                self.manifest
+                    .as_ref()
+                    .unwrap()
+                    .add_record(&lock, 
+                            ManifestRecord::Compaction(task, generated_sstable_ids.clone())
+                    )? ;  
+
                 sstables_to_remove
             };
 
@@ -373,7 +394,9 @@ impl LsmStorageInner {
 
             for table_id in sstables_to_remove.iter() {
                 std::fs::remove_file(self.path_of_sst(*table_id))?;
-            }
+            } 
+
+            self.sync_dir()?; 
         }
 
         Ok(())
