@@ -179,7 +179,14 @@ impl LsmStorageInner {
         };
 
         match task {
-            CompactionTask::Simple(SimpleLeveledCompactionTask {
+            CompactionTask::Leveled(LeveledCompactionTask {
+                upper_level,
+                upper_level_sst_ids,
+                lower_level,
+                lower_level_sst_ids,
+                is_lower_level_bottom_level,
+            })
+            | CompactionTask::Simple(SimpleLeveledCompactionTask {
                 upper_level,
                 lower_level,
                 upper_level_sst_ids,
@@ -243,7 +250,6 @@ impl LsmStorageInner {
                 let iters = MergeIterator::create(iters);
                 self.create_ssts_from_iter(iters, task.compact_to_bottom_level())
             }
-            CompactionTask::Leveled(_) => unimplemented!(),
             CompactionTask::ForceFullCompaction {
                 l0_sstables,
                 l1_sstables,
