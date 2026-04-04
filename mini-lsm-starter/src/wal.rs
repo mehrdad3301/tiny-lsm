@@ -16,31 +16,58 @@
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
 use anyhow::Result;
-use bytes::Bytes;
+use bytes::{Buf, BufMut, Bytes};
 use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
-use std::fs::File;
-use std::io::BufWriter;
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::key::KeySlice;
 
 pub struct Wal {
+    /// ??? why put file behind a mutex
     file: Arc<Mutex<BufWriter<File>>>,
 }
 
 impl Wal {
-    pub fn create(_path: impl AsRef<Path>) -> Result<Self> {
-        unimplemented!()
+    pub fn create(path: impl AsRef<Path>) -> Result<Self> {
+        let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+        let writer = BufWriter::new(file);
+        Ok(Self {
+            file: Arc::new(Mutex::new(writer)),
+        })
     }
 
-    pub fn recover(_path: impl AsRef<Path>, _skiplist: &SkipMap<Bytes, Bytes>) -> Result<Self> {
-        unimplemented!()
+    pub fn recover(path: impl AsRef<Path>, skiplist: &SkipMap<Bytes, Bytes>) -> Result<Self> {
+        let path = path.as_ref();
+        let mut file = OpenOptions::new().read(true).append(true).open(path)?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+        let mut buf: &[u8] = buf.as_slice();
+        while buf.has_remaining() {
+            let key_len = buf.get_u16() as usize;
+            let key = Bytes::copy_from_slice(&buf[..key_len]);
+            buf.advance(key_len);
+            let value_len = buf.get_u16() as usize;
+            let value = Bytes::copy_from_slice(&buf[..value_len]);
+            buf.advance(value_len);
+            skiplist.insert(key, value);
+        }
+        Ok(Self {
+            file: Arc::new(Mutex::new(BufWriter::new(file))),
+        })
     }
 
-    pub fn put(&self, _key: &[u8], _value: &[u8]) -> Result<()> {
-        unimplemented!()
+    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        let mut buf = vec![];
+        buf.put_u16(key.len() as u16);
+        buf.put(key);
+        buf.put_u16(value.len() as u16);
+        buf.put(value);
+        self.file.lock().write_all(&buf)?;
+        Ok(())
     }
 
     /// Implement this in week 3, day 5; if you want to implement this earlier, use `&[u8]` as the key type.
@@ -49,6 +76,9 @@ impl Wal {
     }
 
     pub fn sync(&self) -> Result<()> {
-        unimplemented!()
+        let mut file = self.file.lock();
+        file.flush()?;
+        file.get_mut().sync_all()?;
+        Ok(())
     }
 }

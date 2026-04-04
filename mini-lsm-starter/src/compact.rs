@@ -290,7 +290,7 @@ impl LsmStorageInner {
         let task = CompactionTask::ForceFullCompaction {
             l0_sstables: ssts_to_compact.0.clone(),
             l1_sstables: ssts_to_compact.1.clone(),
-        } ; 
+        };
 
         let generated_sstables = self.compact(&task)?;
         let generated_sstable_ids = generated_sstables
@@ -322,16 +322,16 @@ impl LsmStorageInner {
                 .collect();
 
             *self.state.write() = Arc::new(snapshot);
-            self.sync_dir()?; 
-            self.manifest
-                .as_ref()
-                .unwrap()
-                .add_record(&lock, ManifestRecord::Compaction(task, generated_sstable_ids))? ; 
+            self.sync_dir()?;
+            self.manifest.as_ref().unwrap().add_record(
+                &lock,
+                ManifestRecord::Compaction(task, generated_sstable_ids),
+            )?;
         }
 
         for table_id in ssts_to_compact.0.iter().chain(ssts_to_compact.1.iter()) {
             std::fs::remove_file(self.path_of_sst(*table_id))?;
-        } 
+        }
 
         self.sync_dir()?;
 
@@ -374,13 +374,11 @@ impl LsmStorageInner {
 
                 *self.state.write() = Arc::new(snapshot);
 
-                self.sync_dir()? ; 
-                self.manifest
-                    .as_ref()
-                    .unwrap()
-                    .add_record(&lock, 
-                            ManifestRecord::Compaction(task, generated_sstable_ids.clone())
-                    )? ;  
+                self.sync_dir()?;
+                self.manifest.as_ref().unwrap().add_record(
+                    &lock,
+                    ManifestRecord::Compaction(task, generated_sstable_ids.clone()),
+                )?;
 
                 sstables_to_remove
             };
@@ -394,9 +392,9 @@ impl LsmStorageInner {
 
             for table_id in sstables_to_remove.iter() {
                 std::fs::remove_file(self.path_of_sst(*table_id))?;
-            } 
+            }
 
-            self.sync_dir()?; 
+            self.sync_dir()?;
         }
 
         Ok(())

@@ -17,15 +17,15 @@
 
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
-use std::{fs::File, io::Read};
 use std::path::Path;
 use std::sync::Arc;
+use std::{fs::File, io::Read};
 
 use anyhow::Result;
 use bytes::Buf;
 use parking_lot::{Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
-use serde_json::Deserializer ; 
+use serde_json::Deserializer;
 
 use crate::compact::CompactionTask;
 
@@ -42,35 +42,33 @@ pub enum ManifestRecord {
 
 impl Manifest {
     pub fn create(path: impl AsRef<Path>) -> Result<Self> {
-        Ok(Self { 
+        Ok(Self {
             file: Arc::new(Mutex::new(
-                OpenOptions::new() 
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(path)?))
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create_new(true)
+                    .open(path)?,
+            )),
         })
     }
 
     pub fn recover(path: impl AsRef<Path>) -> Result<(Self, Vec<ManifestRecord>)> {
-        // open manifest file 
-        let mut file = OpenOptions::new()
-            .read(true)
-            .append(true) 
-            .open(path) ?;
+        // open manifest file
+        let mut file = OpenOptions::new().read(true).append(true).open(path)?;
 
-        let mut buf = vec![] ; 
+        let mut buf = vec![];
         file.read_to_end(&mut buf)?;
 
-        // decode manifest records 
+        // decode manifest records
         let manifest_records = Deserializer::from_slice(&buf)
-                .into_iter::<ManifestRecord>()
-                .map(|x| x.unwrap())
-                .collect::<Vec<_>>() ; 
+            .into_iter::<ManifestRecord>()
+            .map(|x| x.unwrap())
+            .collect::<Vec<_>>();
 
-        let manifest = Self { 
-            file: Arc::new(Mutex::new(file))
-        } ; 
+        let manifest = Self {
+            file: Arc::new(Mutex::new(file)),
+        };
 
         Ok((manifest, manifest_records))
     }
@@ -84,9 +82,9 @@ impl Manifest {
     }
 
     pub fn add_record_when_init(&self, record: ManifestRecord) -> Result<()> {
-        let mut file = self.file.lock() ; 
-        let record = serde_json::to_vec(&record)? ; 
-        file.write_all(&record)?;  
+        let mut file = self.file.lock();
+        let record = serde_json::to_vec(&record)?;
+        file.write_all(&record)?;
         file.sync_all()?;
         Ok(())
     }
