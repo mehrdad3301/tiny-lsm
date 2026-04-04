@@ -25,9 +25,7 @@ use crate::{
     iterators::{
         StorageIterator, concat_iterator::SstConcatIterator, merge_iterator::MergeIterator,
         two_merge_iterator::TwoMergeIterator,
-    },
-    mem_table::MemTableIterator,
-    table::SsTableIterator,
+    }, key::{Key, KeyBytes, TS_DEFAULT}, mem_table::MemTableIterator, table::SsTableIterator
 };
 
 /// Represents the internal type for an LSM iterator. This type will be changed across the course for multiple times.
@@ -65,8 +63,8 @@ impl LsmIterator {
         }
         match self.end_bound.as_ref() {
             Bound::Unbounded => {}
-            Bound::Included(key) => self.is_valid = self.inner.key().raw_ref() <= key.as_ref(),
-            Bound::Excluded(key) => self.is_valid = self.inner.key().raw_ref() < key.as_ref(),
+            Bound::Included(key) => self.is_valid = self.inner.key() <= Key::from_slice(key, TS_DEFAULT),
+            Bound::Excluded(key) => self.is_valid = self.inner.key() < Key::from_slice(key, TS_DEFAULT),
         }
     }
 }
@@ -79,7 +77,7 @@ impl StorageIterator for LsmIterator {
     }
 
     fn key(&self) -> &[u8] {
-        self.inner.key().raw_ref()
+        self.inner.key().key_ref()
     }
 
     fn value(&self) -> &[u8] {

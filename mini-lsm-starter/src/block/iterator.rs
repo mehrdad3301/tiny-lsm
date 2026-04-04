@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use super::Block;
 use crate::{
-    block::SIZEOF_U16,
+    block::{SIZEOF_U16, SIZEOF_U64},
     key::{KeySlice, KeyVec},
 };
 
@@ -44,7 +44,8 @@ impl Block {
         buf.get_u16();
         let key_len = buf.get_u16();
         let key = &buf[..key_len as usize];
-        KeyVec::from_vec(key.to_vec())
+        let ts = (&buf[key_len as usize..]).get_u64() ; 
+        KeyVec::from_vec_with_ts(key.to_vec(), ts)
     }
 }
 
@@ -111,13 +112,16 @@ impl BlockIterator {
         let key_len = entry.get_u16() as usize;
 
         self.key.clear();
-        self.key.append(&self.first_key.raw_ref()[..overlap_len]);
+        self.key.append(&self.first_key.key_ref()[..overlap_len]);
         self.key.append(&entry[..key_len]);
 
         entry.advance(key_len);
 
+        let ts = entry.get_u64() ; 
+        self.key.set_ts(ts);
+
         let value_len = entry.get_u16() as usize;
-        let value_start = offset + key_len + SIZEOF_U16 * 3;
+        let value_start = offset + key_len + SIZEOF_U16 * 3 + SIZEOF_U64;
         self.value_range = (value_start, value_start + value_len);
         entry.advance(value_len);
 

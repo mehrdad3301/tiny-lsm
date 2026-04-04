@@ -59,19 +59,19 @@ impl Manifest {
 
         let mut buf = vec![];
         file.read_to_end(&mut buf)?;
-        let mut buf = buf.as_slice() ;  
-        
-        // decode manifest records 
-        let mut manifest_records = vec![] ;
-        while buf.has_remaining() { 
-            let len = buf.get_u64() as usize ; 
-            let manifest_record_bytes = &buf[..len] ; 
+        let mut buf = buf.as_slice();
+
+        // decode manifest records
+        let mut manifest_records = vec![];
+        while buf.has_remaining() {
+            let len = buf.get_u64() as usize;
+            let manifest_record_bytes = &buf[..len];
             let manifest_record = serde_json::from_slice::<ManifestRecord>(&buf[..len]).unwrap();
             buf.advance(len);
-            if crc32fast::hash(manifest_record_bytes) != buf.get_u32() { 
+            if crc32fast::hash(manifest_record_bytes) != buf.get_u32() {
                 bail!("checksum mismatched!")
-            }  
-            manifest_records.push(manifest_record) ; 
+            }
+            manifest_records.push(manifest_record);
         }
 
         let manifest = Self {
@@ -94,9 +94,9 @@ impl Manifest {
         let mut buf = vec![];
         let record = serde_json::to_vec(&record)?;
         let checksum = crc32fast::hash(&record);
-        buf.put_u64(record.len() as u64) ; 
-        buf.put(&record[..]) ; 
-        buf.put_u32(checksum) ; 
+        buf.put_u64(record.len() as u64);
+        buf.put(&record[..]);
+        buf.put_u32(checksum);
         file.write_all(&buf)?;
         file.sync_all()?;
         Ok(())

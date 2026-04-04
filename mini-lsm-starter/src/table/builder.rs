@@ -70,7 +70,7 @@ impl SsTableBuilder {
 
         if self.builder.add(key, value) {
             self.last_key.set_from_slice(key);
-            self.key_hashes.push(farmhash::fingerprint32(key.raw_ref()));
+            self.key_hashes.push(farmhash::fingerprint32(key.key_ref()));
             return;
         }
 
@@ -79,7 +79,7 @@ impl SsTableBuilder {
         assert!(self.builder.add(key, value));
         self.last_key.set_from_slice(key);
         self.first_key.set_from_slice(key);
-        self.key_hashes.push(farmhash::fingerprint32(key.raw_ref()));
+        self.key_hashes.push(farmhash::fingerprint32(key.key_ref()));
     }
 
     fn add_block(&mut self) {
@@ -90,7 +90,7 @@ impl SsTableBuilder {
             last_key: std::mem::take(&mut self.last_key).into_key_bytes(),
         });
         let new_block = builder.build().encode();
-        let checksum = crc32fast::hash(&new_block); 
+        let checksum = crc32fast::hash(&new_block);
         self.data.extend(&new_block);
         self.data.put_u32(checksum);
     }

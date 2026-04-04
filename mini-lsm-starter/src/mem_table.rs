@@ -28,7 +28,7 @@ use nom::AsBytes;
 use ouroboros::self_referencing;
 
 use crate::iterators::StorageIterator;
-use crate::key::KeySlice;
+use crate::key::{KeySlice, TS_DEFAULT};
 use crate::table::SsTableBuilder;
 use crate::wal::Wal;
 
@@ -219,7 +219,7 @@ impl StorageIterator for MemTableIterator {
 
     fn key(&self) -> KeySlice {
         // ??? as_bytes vs [..]
-        KeySlice::from_slice(self.borrow_item().0.as_bytes())
+        KeySlice::from_slice(self.borrow_item().0.as_bytes(), TS_DEFAULT)
     }
 
     fn is_valid(&self) -> bool {

@@ -86,7 +86,10 @@ fn test_integration(compaction_options: CompactionOptions) {
     dump_files_in_dir(&dir);
 
     let storage = MiniLsm::open(&dir, options).unwrap();
-    assert_eq!(&dbg!(storage.get(b"0").unwrap().unwrap())[..], b"v20".as_slice());
+    assert_eq!(
+        &dbg!(storage.get(b"0").unwrap().unwrap())[..],
+        b"v20".as_slice()
+    );
     assert_eq!(&storage.get(b"1").unwrap().unwrap()[..], b"v20".as_slice());
     assert_eq!(storage.get(b"2").unwrap(), None);
 }

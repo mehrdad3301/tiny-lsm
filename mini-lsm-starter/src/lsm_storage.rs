@@ -39,7 +39,7 @@ use crate::iterators::StorageIterator;
 use crate::iterators::concat_iterator::SstConcatIterator;
 use crate::iterators::merge_iterator::MergeIterator;
 use crate::iterators::two_merge_iterator::TwoMergeIterator;
-use crate::key::KeySlice;
+use crate::key::{KeySlice, TS_DEFAULT, TS_RANGE_BEGIN};
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::{Manifest, ManifestRecord};
 use crate::mem_table::{MemTable, MemTableIterator};
@@ -110,19 +110,19 @@ fn range_overlap(
     table_end: KeySlice,
 ) -> bool {
     match user_end {
-        Bound::Excluded(key) if key <= table_begin.raw_ref() => {
+        Bound::Excluded(key) if key <= table_begin.key_ref() => {
             return false;
         }
-        Bound::Included(key) if key < table_begin.raw_ref() => {
+        Bound::Included(key) if key < table_begin.key_ref() => {
             return false;
         }
         _ => {}
     }
     match user_begin {
-        Bound::Excluded(key) if key >= table_end.raw_ref() => {
+        Bound::Excluded(key) if key >= table_end.key_ref() => {
             return false;
         }
-        Bound::Included(key) if key > table_end.raw_ref() => {
+        Bound::Included(key) if key > table_end.key_ref() => {
             return false;
         }
         _ => {}
@@ -131,7 +131,7 @@ fn range_overlap(
 }
 
 fn key_within(user_key: &[u8], table_begin: KeySlice, table_end: KeySlice) -> bool {
-    table_begin.raw_ref() <= user_key && user_key <= table_end.raw_ref()
+    table_begin.key_ref() <= user_key && user_key <= table_end.key_ref()
 }
 
 impl LsmStorageOptions {
@@ -210,8 +210,8 @@ impl Drop for MiniLsm {
 
 impl MiniLsm {
     pub fn close(&self) -> Result<()> {
-        self.inner.sync_dir()?; /// ??? why 
-
+        self.inner.sync_dir()?;
+        /// ??? why
         // wait for the flush thread to finish
         self.flush_notifier.send(())?;
         let mut flush_thread = self.flush_thread.lock();
@@ -395,7 +395,7 @@ impl LsmStorageInner {
 
                         state = new_state;
                         next_sst_id = next_sst_id.max(output.iter().max().copied().unwrap())
-                    },
+                    }
                     ManifestRecord::Flush(id) => {
                         if compaction_controller.flush_to_l0() {
                             state.l0_sstables.insert(0, id);
@@ -403,8 +403,11 @@ impl LsmStorageInner {
                             state.levels.insert(0, (id, vec![id]));
                         }
                         next_sst_id = id.max(next_sst_id);
-                        assert!(memtables.remove(&id), "missing manifest record for flushed memtable !");
-                    },
+                        assert!(
+                            memtables.remove(&id),
+                            "missing manifest record for flushed memtable !"
+                        );
+                    }
                     ManifestRecord::NewMemtable(id) => {
                         next_sst_id = id.max(next_sst_id);
                         memtables.insert(id);
@@ -451,7 +454,7 @@ impl LsmStorageInner {
                         memtable_id,
                         Self::path_of_wal_static(path, memtable_id),
                     )?;
-                    if !memtable.is_empty() { 
+                    if !memtable.is_empty() {
                         state.imm_memtables.insert(0, Arc::new(memtable));
                     }
                 }
@@ -519,18 +522,18 @@ impl LsmStorageInner {
             }
         }
 
-        let key = KeySlice::from_slice(key);
+        let key = KeySlice::from_slice(key, TS_DEFAULT);
         for sstable in snapshot.l0_sstables.iter() {
             let sstable = snapshot.sstables.get(sstable).unwrap();
             if !key_within(
-                key.raw_ref(),
+                key.key_ref(),
                 sstable.first_key().as_key_slice(),
                 sstable.last_key().as_key_slice(),
             ) {
                 continue;
             }
             if let Some(bloom_filter) = &sstable.bloom {
-                if !bloom_filter.may_contain(farmhash::fingerprint32(key.raw_ref())) {
+                if !bloom_filter.may_contain(farmhash::fingerprint32(key.key_ref())) {
                     continue;
                 }
             }
@@ -549,14 +552,14 @@ impl LsmStorageInner {
             for id in sstable_ids {
                 let table = snapshot.sstables.get(id).unwrap().clone();
                 if !key_within(
-                    key.raw_ref(),
+                    key.key_ref(),
                     table.first_key().as_key_slice(),
                     table.last_key().as_key_slice(),
                 ) {
                     continue;
                 }
                 if let Some(bloom_filter) = &table.bloom {
-                    if !bloom_filter.may_contain(farmhash::fingerprint32(key.raw_ref())) {
+                    if !bloom_filter.may_contain(farmhash::fingerprint32(key.key_ref())) {
                         continue;
                     }
                 }
@@ -578,9 +581,9 @@ impl LsmStorageInner {
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.
     pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
-        for record in batch { 
+        for record in batch {
             match record {
-                WriteBatchRecord::Put(key, value) => { 
+                WriteBatchRecord::Put(key, value) => {
                     let guard = self.state.read();
                     guard.memtable.put(key.as_ref(), value.as_ref())?;
                     if guard.memtable.approximate_size() > self.options.target_sst_size {
@@ -593,9 +596,8 @@ impl LsmStorageInner {
                             self.force_freeze_memtable(&lock)?;
                         }
                     }
-
-                },
-                WriteBatchRecord::Del(key) => { 
+                }
+                WriteBatchRecord::Del(key) => {
                     let guard = self.state.read();
                     guard.memtable.put(key.as_ref(), b"")?;
                     if guard.memtable.approximate_size() > self.options.target_sst_size {
@@ -608,7 +610,7 @@ impl LsmStorageInner {
                             self.force_freeze_memtable(&lock)?;
                         }
                     }
-                },
+                }
             }
         }
         Ok(())
@@ -616,12 +618,12 @@ impl LsmStorageInner {
 
     /// Put a key-value pair into the storage by writing into the current memtable.
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        self.write_batch(&[WriteBatchRecord::Put(key,value)])  
+        self.write_batch(&[WriteBatchRecord::Put(key, value)])
     }
 
     /// Remove a key from the storage by writing an empty value.
     pub fn delete(&self, key: &[u8]) -> Result<()> {
-        self.write_batch(&[WriteBatchRecord::Put(key,b"")])  
+        self.write_batch(&[WriteBatchRecord::Put(key, b"")])
     }
 
     pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
@@ -648,12 +650,11 @@ impl LsmStorageInner {
     /// Force freeze the current memtable to an immutable memtable
     pub fn force_freeze_memtable(&self, state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
         // creating memtable before acquiring the lock
-        let id = self.next_sst_id() ; 
-        let memtable ;
-        if self.options.enable_wal { 
-            memtable = Arc::new(MemTable::create_with_wal(id, 
-                self.path_of_wal(id))?)
-        } else { 
+        let id = self.next_sst_id();
+        let memtable;
+        if self.options.enable_wal {
+            memtable = Arc::new(MemTable::create_with_wal(id, self.path_of_wal(id))?)
+        } else {
             memtable = Arc::new(MemTable::create(id));
         }
 
@@ -664,8 +665,8 @@ impl LsmStorageInner {
             snapshot.imm_memtables.insert(0, frozen_memtable.clone());
             *guard = Arc::new(snapshot);
             frozen_memtable
-        } ;
-        
+        };
+
         frozen_memtable.sync_wal()?;
 
         dbg!(frozen_memtable.is_empty());
@@ -675,9 +676,7 @@ impl LsmStorageInner {
         self.manifest
             .as_ref()
             .unwrap()
-            .add_record(
-                &state_lock_observer,
-            ManifestRecord::NewMemtable(id))?;
+            .add_record(&state_lock_observer, ManifestRecord::NewMemtable(id))?;
 
         Ok(())
     }
@@ -760,14 +759,14 @@ impl LsmStorageInner {
             ) {
                 let iter = match lower {
                     Bound::Included(key) => {
-                        SsTableIterator::create_and_seek_to_key(table, KeySlice::from_slice(key))?
+                        SsTableIterator::create_and_seek_to_key(table, KeySlice::from_slice(key, TS_RANGE_BEGIN))?
                     }
                     Bound::Excluded(key) => {
                         let mut iter = SsTableIterator::create_and_seek_to_key(
                             table,
-                            KeySlice::from_slice(key),
+                            KeySlice::from_slice(key, TS_RANGE_BEGIN),
                         )?;
-                        if iter.is_valid() && iter.key().raw_ref() == key {
+                        if iter.is_valid() && iter.key().key_ref() == key {
                             iter.next()?;
                         }
                         iter
@@ -788,14 +787,14 @@ impl LsmStorageInner {
             }
             let iter = match lower {
                 Bound::Included(key) => {
-                    SstConcatIterator::create_and_seek_to_key(sstables, KeySlice::from_slice(key))?
+                    SstConcatIterator::create_and_seek_to_key(sstables, KeySlice::from_slice(key, TS_RANGE_BEGIN))?
                 }
                 Bound::Excluded(key) => {
                     let mut iter = SstConcatIterator::create_and_seek_to_key(
                         sstables,
-                        KeySlice::from_slice(key),
+                        KeySlice::from_slice(key, TS_RANGE_BEGIN),
                     )?;
-                    if iter.is_valid() && iter.key().raw_ref() == key {
+                    if iter.is_valid() && iter.key().key_ref() == key {
                         iter.next()?;
                     }
                     iter

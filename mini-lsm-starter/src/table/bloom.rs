@@ -63,10 +63,10 @@ impl<T: AsMut<[u8]>> BitSliceMut for T {
 impl Bloom {
     /// Decode a bloom filter
     pub fn decode(buf: &[u8]) -> Result<Self> {
-        let offset = buf.len() - SIZEOF_U32 ; 
-        let checksum = (&buf[offset..]).get_u32() ; 
-        if !crc32fast::hash(&buf[..offset]).eq(&checksum) { 
-            return Err(anyhow!("can't decoded corrupted bloom filter")) ; 
+        let offset = buf.len() - SIZEOF_U32;
+        let checksum = (&buf[offset..]).get_u32();
+        if !crc32fast::hash(&buf[..offset]).eq(&checksum) {
+            return Err(anyhow!("can't decoded corrupted bloom filter"));
         }
 
         let filter = &buf[..offset - 1];
@@ -83,7 +83,7 @@ impl Bloom {
         let offset = buf.len();
         buf.extend(&self.filter);
         buf.put_u8(self.k);
-        let checksum = crc32fast::hash(&buf[offset..]) ; 
+        let checksum = crc32fast::hash(&buf[offset..]);
         buf.put_u32(checksum);
     }
 
