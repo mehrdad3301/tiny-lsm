@@ -22,6 +22,7 @@ use farmhash;
 
 use anyhow::Result;
 use bytes::BufMut;
+use crc32fast;
 
 use super::{BlockMeta, Bloom, SsTable};
 use crate::{
@@ -88,7 +89,10 @@ impl SsTableBuilder {
             first_key: std::mem::take(&mut self.first_key).into_key_bytes(),
             last_key: std::mem::take(&mut self.last_key).into_key_bytes(),
         });
-        self.data.append(&mut builder.build().encode().to_vec());
+        let new_block = builder.build().encode();
+        let checksum = crc32fast::hash(&new_block); 
+        self.data.extend(&new_block);
+        self.data.put_u32(checksum);
     }
 
     /// Get the estimated size of the SSTable.

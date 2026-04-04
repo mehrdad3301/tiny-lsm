@@ -14,8 +14,10 @@
 
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use anyhow::Result;
-use bytes::{BufMut, Bytes, BytesMut};
+use anyhow::{Result, anyhow};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+
+use crate::block::SIZEOF_U32;
 
 /// Implements a bloom filter
 pub struct Bloom {
@@ -61,8 +63,15 @@ impl<T: AsMut<[u8]>> BitSliceMut for T {
 impl Bloom {
     /// Decode a bloom filter
     pub fn decode(buf: &[u8]) -> Result<Self> {
-        let filter = &buf[..buf.len() - 1];
-        let k = buf[buf.len() - 1];
+        let offset = buf.len() - SIZEOF_U32 ; 
+        let checksum = (&buf[offset..]).get_u32() ; 
+        if !crc32fast::hash(&buf[..offset]).eq(&checksum) { 
+            return Err(anyhow!("can't decoded corrupted bloom filter")) ; 
+        }
+
+        let filter = &buf[..offset - 1];
+        let k = buf[offset - 1];
+
         Ok(Self {
             filter: filter.to_vec().into(),
             k,
@@ -71,8 +80,11 @@ impl Bloom {
 
     /// Encode a bloom filter
     pub fn encode(&self, buf: &mut Vec<u8>) {
+        let offset = buf.len();
         buf.extend(&self.filter);
         buf.put_u8(self.k);
+        let checksum = crc32fast::hash(&buf[offset..]) ; 
+        buf.put_u32(checksum);
     }
 
     /// Get bloom filter bits per key from entries count and FPR

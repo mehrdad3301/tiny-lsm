@@ -15,8 +15,9 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use bytes::{Buf, BufMut, Bytes};
+use std::hash::Hasher;
 use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
 use std::fs::{File, OpenOptions};
@@ -47,12 +48,21 @@ impl Wal {
         file.read_to_end(&mut buf)?;
         let mut buf: &[u8] = buf.as_slice();
         while buf.has_remaining() {
+            let mut hasher = crc32fast::Hasher::new();
             let key_len = buf.get_u16() as usize;
+            hasher.write_u16(key_len as u16) ;
             let key = Bytes::copy_from_slice(&buf[..key_len]);
+            hasher.write(&key) ;
             buf.advance(key_len);
             let value_len = buf.get_u16() as usize;
+            hasher.write_u16(value_len as u16) ;
             let value = Bytes::copy_from_slice(&buf[..value_len]);
+            hasher.write(&value) ;
             buf.advance(value_len);
+            let checksum = buf.get_u32() ; 
+            if !hasher.finalize().eq(&checksum) { 
+                bail!("checksum mismatch");
+            }
             skiplist.insert(key, value);
         }
         Ok(Self {
@@ -62,10 +72,17 @@ impl Wal {
 
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
         let mut buf = vec![];
+        let mut hasher = crc32fast::Hasher::new();
         buf.put_u16(key.len() as u16);
+        hasher.write_u16(key.len() as u16) ; 
         buf.put(key);
+        hasher.write(key) ;
         buf.put_u16(value.len() as u16);
+        hasher.write_u16(value.len() as u16) ; 
         buf.put(value);
+        hasher.write(value) ;
+        let checksum = hasher.finalize() ; 
+        buf.put_u32(checksum) ; 
         self.file.lock().write_all(&buf)?;
         Ok(())
     }

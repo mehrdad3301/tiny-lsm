@@ -50,20 +50,24 @@ impl BlockMeta {
     /// in order to help keep track of `first_key` when decoding from the same buffer in the future.
     pub fn encode_block_meta(block_meta: &[BlockMeta], buf: &mut Vec<u8>) {
         buf.put_u32(block_meta.len() as u32);
+        let offset = buf.len() ; 
         for meta in block_meta {
             buf.put_u32(meta.offset as u32);
             buf.put_u16(meta.first_key.len() as u16);
             buf.put_slice(meta.first_key.raw_ref());
             buf.put_u16(meta.last_key.len() as u16);
             buf.put_slice(meta.last_key.raw_ref());
-        }
+        } 
+        let checksum = crc32fast::hash(&buf[offset..]);
+        buf.put_u32(checksum) ; 
     }
 
     /// Decode block meta from a buffer.
-    pub fn decode_block_meta(mut buf: impl Buf) -> Vec<BlockMeta> {
+    pub fn decode_block_meta(mut buf: &[u8]) -> Vec<BlockMeta> {
         let mut block_meta = vec![];
 
         let num = buf.get_u32();
+        let checksum = crc32fast::hash(&buf[..(buf.len() - SIZEOF_U32)]) ; 
         for _ in 0..num {
             let offset = buf.get_u32() as usize;
             let first_key_len = buf.get_u16();
@@ -75,6 +79,10 @@ impl BlockMeta {
                 first_key,
                 last_key,
             });
+        } 
+
+        if !buf.get_u32().eq(&checksum) { 
+            return vec![] ;  
         }
 
         block_meta
@@ -206,7 +214,16 @@ impl SsTable {
         let data = self
             .file
             .read(offset as u64, (offset_next - offset) as u64)?;
-        Ok(Arc::new(Block::decode(&data)))
+
+        let block_len = offset_next - offset - 4;
+        let block = &data[..(data.len() - SIZEOF_U32)] ; 
+        let checksum = (&data[(data.len() - SIZEOF_U32)..]).get_u32(); 
+        if !crc32fast::hash(block).eq(&checksum) { 
+            return Err(anyhow!("corrupted block")) ;
+        }
+
+        let block = Block::decode(block) ; 
+        Ok(Arc::new(block))
     }
 
     /// Read a block from disk, with block cache. (Day 4)

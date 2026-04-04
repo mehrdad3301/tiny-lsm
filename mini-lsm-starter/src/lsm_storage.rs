@@ -578,32 +578,50 @@ impl LsmStorageInner {
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.
     pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
-        unimplemented!()
+        for record in batch { 
+            match record {
+                WriteBatchRecord::Put(key, value) => { 
+                    let guard = self.state.read();
+                    guard.memtable.put(key.as_ref(), value.as_ref())?;
+                    if guard.memtable.approximate_size() > self.options.target_sst_size {
+                        drop(guard);
+                        let lock = self.state_lock.lock();
+                        let guard = self.state.read();
+                        // check again, another thread might have frozen memtable
+                        if guard.memtable.approximate_size() > self.options.target_sst_size {
+                            drop(guard);
+                            self.force_freeze_memtable(&lock)?;
+                        }
+                    }
+
+                },
+                WriteBatchRecord::Del(key) => { 
+                    let guard = self.state.read();
+                    guard.memtable.put(key.as_ref(), b"")?;
+                    if guard.memtable.approximate_size() > self.options.target_sst_size {
+                        drop(guard);
+                        let lock = self.state_lock.lock();
+                        let guard = self.state.read();
+                        // check again, another thread might have frozen memtable
+                        if guard.memtable.approximate_size() > self.options.target_sst_size {
+                            drop(guard);
+                            self.force_freeze_memtable(&lock)?;
+                        }
+                    }
+                },
+            }
+        }
+        Ok(())
     }
 
     /// Put a key-value pair into the storage by writing into the current memtable.
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        let guard = self.state.read();
-
-        guard.memtable.put(key, value)?;
-
-        if guard.memtable.approximate_size() > self.options.target_sst_size {
-            drop(guard);
-            let lock = self.state_lock.lock();
-            let guard = self.state.read();
-            // check again, another thread might have frozen memtable
-            if guard.memtable.approximate_size() > self.options.target_sst_size {
-                drop(guard);
-                self.force_freeze_memtable(&lock)?;
-            }
-        }
-
-        Ok(())
+        self.write_batch(&[WriteBatchRecord::Put(key,value)])  
     }
 
     /// Remove a key from the storage by writing an empty value.
-    pub fn delete(&self, _key: &[u8]) -> Result<()> {
-        self.put(_key, b"")
+    pub fn delete(&self, key: &[u8]) -> Result<()> {
+        self.write_batch(&[WriteBatchRecord::Put(key,b"")])  
     }
 
     pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {

@@ -16,13 +16,13 @@
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::{fs::File, io::Read};
 
-use anyhow::Result;
-use bytes::Buf;
+use anyhow::{Result, bail};
+use bytes::{Buf, BufMut, BytesMut};
 use parking_lot::{Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 use serde_json::Deserializer;
@@ -59,12 +59,20 @@ impl Manifest {
 
         let mut buf = vec![];
         file.read_to_end(&mut buf)?;
-
-        // decode manifest records
-        let manifest_records = Deserializer::from_slice(&buf)
-            .into_iter::<ManifestRecord>()
-            .map(|x| x.unwrap())
-            .collect::<Vec<_>>();
+        let mut buf = buf.as_slice() ;  
+        
+        // decode manifest records 
+        let mut manifest_records = vec![] ;
+        while buf.has_remaining() { 
+            let len = buf.get_u64() as usize ; 
+            let manifest_record_bytes = &buf[..len] ; 
+            let manifest_record = serde_json::from_slice::<ManifestRecord>(&buf[..len]).unwrap();
+            buf.advance(len);
+            if crc32fast::hash(manifest_record_bytes) != buf.get_u32() { 
+                bail!("checksum mismatched!")
+            }  
+            manifest_records.push(manifest_record) ; 
+        }
 
         let manifest = Self {
             file: Arc::new(Mutex::new(file)),
@@ -83,8 +91,13 @@ impl Manifest {
 
     pub fn add_record_when_init(&self, record: ManifestRecord) -> Result<()> {
         let mut file = self.file.lock();
+        let mut buf = vec![];
         let record = serde_json::to_vec(&record)?;
-        file.write_all(&record)?;
+        let checksum = crc32fast::hash(&record);
+        buf.put_u64(record.len() as u64) ; 
+        buf.put(&record[..]) ; 
+        buf.put_u32(checksum) ; 
+        file.write_all(&buf)?;
         file.sync_all()?;
         Ok(())
     }
