@@ -27,6 +27,7 @@ use std::time::Duration;
 
 use anyhow::{Error, Result, anyhow};
 pub use leveled::{LeveledCompactionController, LeveledCompactionOptions, LeveledCompactionTask};
+use rand::seq::index::sample;
 use serde::{Deserialize, Serialize};
 pub use simple_leveled::{
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, SimpleLeveledCompactionTask,
@@ -140,16 +141,14 @@ impl LsmStorageInner {
     ) -> Result<Vec<Arc<SsTable>>> {
         let mut builder = SsTableBuilder::new(self.options.block_size);
         let mut sstables = Vec::new();
+        let mut prev_key = Vec::<u8>::new();
 
         while iter.is_valid() {
-            if compact_to_bottom {
-                if !iter.value().is_empty() {
-                    builder.add(iter.key(), iter.value());
-                }
-            } else {
-                builder.add(iter.key(), iter.value());
-            }
-            if builder.estimated_size() > self.options.target_sst_size {
+            builder.add(iter.key(), iter.value());
+
+            let same_as_prev = iter.key().key_ref() == prev_key ;
+
+            if !same_as_prev && builder.estimated_size() > self.options.target_sst_size {
                 let id = self.next_sst_id();
                 let ready_builder =
                     std::mem::replace(&mut builder, SsTableBuilder::new(self.options.block_size));
@@ -158,6 +157,11 @@ impl LsmStorageInner {
                     Some(self.block_cache.clone()),
                     self.path_of_sst(id),
                 )?));
+            }
+
+            if !same_as_prev { 
+                prev_key.clear();
+                prev_key.extend(iter.key().key_ref()); 
             }
             iter.next()?;
         }

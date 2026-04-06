@@ -53,7 +53,6 @@ impl Block {
 
     /// Decode from the data layout, transform the input `data` to a single `Block`
     pub fn decode(data: &[u8]) -> Self {
-
         // read the last 2 bytes
         if let Some((data, num_elements)) = data.split_last_chunk::<SIZEOF_U16>() {
             let num_elements = num_elements.as_slice().get_u16() as usize;

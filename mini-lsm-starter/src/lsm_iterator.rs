@@ -25,7 +25,7 @@ use crate::{
     iterators::{
         StorageIterator, concat_iterator::SstConcatIterator, merge_iterator::MergeIterator,
         two_merge_iterator::TwoMergeIterator,
-    }, key::{Key, KeyBytes, TS_DEFAULT}, mem_table::MemTableIterator, table::SsTableIterator
+    }, key::KeyBytes, mem_table::MemTableIterator, table::SsTableIterator
 };
 
 /// Represents the internal type for an LSM iterator. This type will be changed across the course for multiple times.
@@ -38,6 +38,8 @@ pub struct LsmIterator {
     inner: LsmIteratorInner,
     end_bound: Bound<Bytes>,
     is_valid: bool,
+    /// Track the previous user key to skip old versions in MVCC
+    prev_key: Vec<u8>,
 }
 
 impl LsmIterator {
@@ -46,26 +48,60 @@ impl LsmIterator {
             is_valid: iter.is_valid(),
             inner: iter,
             end_bound,
+            prev_key: Vec::new(),
         };
 
-        while iter.is_valid() && iter.inner.value().is_empty() {
-            iter.inner.next()?;
-            iter.check_is_valid();
+        // Initialize by skipping old versions and tombstones
+        if iter.is_valid() {
+            iter.move_to_key()?;
         }
 
         Ok(iter)
     }
 
-    fn check_is_valid(&mut self) {
+    fn next_inner(&mut self) -> Result<()> {
+        self.inner.next()?;
         if !self.inner.is_valid() {
             self.is_valid = false;
-            return;
+            return Ok(());
         }
         match self.end_bound.as_ref() {
             Bound::Unbounded => {}
-            Bound::Included(key) => self.is_valid = self.inner.key() <= Key::from_slice(key, TS_DEFAULT),
-            Bound::Excluded(key) => self.is_valid = self.inner.key() < Key::from_slice(key, TS_DEFAULT),
+            Bound::Included(key) => self.is_valid = self.inner.key().key_ref() <= key.as_ref(),
+            Bound::Excluded(key) => self.is_valid = self.inner.key().key_ref() < key.as_ref(),
         }
+        Ok(())
+    }
+
+    /// Move to the next valid key, skipping old versions and tombstones
+    fn move_to_key(&mut self) -> Result<()> {
+        loop {
+            // Skip old versions of the same key that we've already returned
+            while self.inner.is_valid() && self.inner.key().key_ref() == self.prev_key.as_slice() {
+                self.next_inner()?;
+            }
+            if !self.inner.is_valid() {
+                break;
+            }
+
+            // Update prev_key to current key
+            self.prev_key.clear();
+            self.prev_key.extend(self.inner.key().key_ref());
+
+            // Check if current value is a tombstone - if so we need to skip to next key
+            if self.inner.value().is_empty() {
+                self.next_inner()?;
+                if !self.inner.is_valid() {
+                    break;
+                }
+                // Continue loop - check if we moved to next key or different version
+                continue;
+            }
+
+            // Found a valid key with non-empty value
+            break;
+        }
+        Ok(())
     }
 }
 
@@ -85,13 +121,8 @@ impl StorageIterator for LsmIterator {
     }
 
     fn next(&mut self) -> Result<()> {
-        self.inner.next()?;
-        self.check_is_valid();
-        while self.is_valid() && self.inner.value().is_empty() {
-            self.inner.next()?;
-            self.check_is_valid();
-        }
-
+        self.next_inner()?;
+        self.move_to_key()?;
         Ok(())
     }
     fn num_active_iterators(&self) -> usize {

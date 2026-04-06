@@ -73,9 +73,15 @@ impl BlockMeta {
         for _ in 0..num {
             let offset = buf.get_u32() as usize;
             let first_key_len = buf.get_u16();
-            let first_key = KeyBytes::from_bytes_with_ts(buf.copy_to_bytes(first_key_len as usize), buf.get_u64());
+            let first_key = KeyBytes::from_bytes_with_ts(
+                buf.copy_to_bytes(first_key_len as usize),
+                buf.get_u64(),
+            );
             let last_key_len = buf.get_u16();
-            let last_key = KeyBytes::from_bytes_with_ts(buf.copy_to_bytes(last_key_len as usize), buf.get_u64());
+            let last_key = KeyBytes::from_bytes_with_ts(
+                buf.copy_to_bytes(last_key_len as usize),
+                buf.get_u64(),
+            );
             block_meta.push(BlockMeta {
                 offset,
                 first_key,

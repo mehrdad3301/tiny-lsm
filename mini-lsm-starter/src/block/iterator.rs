@@ -44,7 +44,7 @@ impl Block {
         buf.get_u16();
         let key_len = buf.get_u16();
         let key = &buf[..key_len as usize];
-        let ts = (&buf[key_len as usize..]).get_u64() ; 
+        let ts = (&buf[key_len as usize..]).get_u64();
         KeyVec::from_vec_with_ts(key.to_vec(), ts)
     }
 }
@@ -117,7 +117,7 @@ impl BlockIterator {
 
         entry.advance(key_len);
 
-        let ts = entry.get_u64() ; 
+        let ts = entry.get_u64();
         self.key.set_ts(ts);
 
         let value_len = entry.get_u16() as usize;
