@@ -143,35 +143,34 @@ impl LsmStorageInner {
         let mut builder = SsTableBuilder::new(self.options.block_size);
         let mut sstables = Vec::new();
         let mut prev_key = Vec::<u8>::new();
-        let mut first_time_below_watermark= false ; 
-        let watermark = self.mvcc().watermark() ; 
+        let mut first_time_below_watermark = false;
+        let watermark = self.mvcc().watermark();
 
         while iter.is_valid() {
+            let same_as_prev = iter.key().key_ref() == prev_key;
 
-            let same_as_prev = iter.key().key_ref() == prev_key ;
-
-            if !same_as_prev { 
-                first_time_below_watermark = true ; 
+            if !same_as_prev {
+                first_time_below_watermark = true;
             }
 
-            if iter.key().ts() <= watermark { 
-                if !first_time_below_watermark{ 
-                    iter.next()? ; 
-                    continue ; 
-                }  
-
-                if compact_to_bottom && iter.value().is_empty() { 
-                    first_time_below_watermark = false ; 
-                    prev_key.clear();
-                    prev_key.extend(iter.key().key_ref());
-                    iter.next()? ; 
-                    continue ; 
+            if iter.key().ts() <= watermark {
+                if !first_time_below_watermark {
+                    iter.next()?;
+                    continue;
                 }
 
-                first_time_below_watermark = false ; 
-            } 
+                if compact_to_bottom && iter.value().is_empty() {
+                    first_time_below_watermark = false;
+                    prev_key.clear();
+                    prev_key.extend(iter.key().key_ref());
+                    iter.next()?;
+                    continue;
+                }
 
-            builder.add(iter.key(), iter.value()) ; 
+                first_time_below_watermark = false;
+            }
+
+            builder.add(iter.key(), iter.value());
 
             if !same_as_prev && builder.estimated_size() > self.options.target_sst_size {
                 let id = self.next_sst_id();
@@ -184,9 +183,9 @@ impl LsmStorageInner {
                 )?));
             }
 
-            if !same_as_prev { 
+            if !same_as_prev {
                 prev_key.clear();
-                prev_key.extend(iter.key().key_ref()); 
+                prev_key.extend(iter.key().key_ref());
             }
             iter.next()?;
         }

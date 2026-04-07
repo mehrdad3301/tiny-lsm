@@ -34,11 +34,14 @@ impl Watermark {
         }
     }
 
-    pub fn add_reader(&mut self, ts: u64) { 
-        self.readers.entry(ts).and_modify(|curr| *curr += 1).or_insert(1);
+    pub fn add_reader(&mut self, ts: u64) {
+        self.readers
+            .entry(ts)
+            .and_modify(|curr| *curr += 1)
+            .or_insert(1);
     }
 
-    pub fn remove_reader(&mut self, ts: u64) { 
+    pub fn remove_reader(&mut self, ts: u64) {
         let cnt = self.readers.get_mut(&ts).unwrap();
         *cnt -= 1;
         if *cnt == 0 {

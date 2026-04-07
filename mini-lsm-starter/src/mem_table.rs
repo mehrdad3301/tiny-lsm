@@ -118,7 +118,7 @@ impl MemTable {
         // timestamp for the key-ts pair.
         self.scan(
             lower.map(|x| KeySlice::from_slice(x, TS_DEFAULT)),
-            upper.map(|x| KeySlice::from_slice(x, TS_DEFAULT))
+            upper.map(|x| KeySlice::from_slice(x, TS_DEFAULT)),
         )
     }
 
@@ -138,13 +138,10 @@ impl MemTable {
     /// In week 2, day 6, also flush the data to WAL.
     /// In week 3, day 5, modify the function to use the batch API.
     pub fn put(&self, key: KeySlice, value: &[u8]) -> Result<()> {
-        let key_bytes = KeyBytes::from_bytes_with_ts(
-            Bytes::copy_from_slice(key.key_ref()),
-            key.ts(),
-        );
+        let key_bytes =
+            KeyBytes::from_bytes_with_ts(Bytes::copy_from_slice(key.key_ref()), key.ts());
         let size = key.key_len() + value.len();
-        self.map
-            .insert(key_bytes, Bytes::copy_from_slice(value));
+        self.map.insert(key_bytes, Bytes::copy_from_slice(value));
         self.approximate_size
             .fetch_add(size, std::sync::atomic::Ordering::Relaxed);
         if let Some(wal) = &self.wal {
@@ -155,8 +152,19 @@ impl MemTable {
     }
 
     /// Implement this in week 3, day 5; if you want to implement this earlier, use `&[u8]` as the key type.
-    pub fn put_batch(&self, _data: &[(KeySlice, &[u8])]) -> Result<()> {
-        unimplemented!()
+    pub fn put_batch(&self, data: &[(KeySlice, &[u8])]) -> Result<()> {
+        for (key, value) in data {
+            let key_bytes = key.to_key_vec().into_key_bytes() ; 
+            let size = key.key_len() + value.len();
+            self.map.insert(key_bytes, Bytes::copy_from_slice(value));
+            self.approximate_size
+                .fetch_add(size, std::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(wal) = &self.wal {
+            wal.put_batch(data)? ;
+        }
+
+        Ok(())
     }
 
     pub fn sync_wal(&self) -> Result<()> {
@@ -208,8 +216,13 @@ impl MemTable {
     }
 }
 
-type SkipMapRangeIter<'a> =
-    crossbeam_skiplist::map::Range<'a, KeyBytes, (Bound<KeyBytes>, Bound<KeyBytes>), KeyBytes, Bytes>;
+type SkipMapRangeIter<'a> = crossbeam_skiplist::map::Range<
+    'a,
+    KeyBytes,
+    (Bound<KeyBytes>, Bound<KeyBytes>),
+    KeyBytes,
+    Bytes,
+>;
 
 /// An iterator over a range of `SkipMap`. This is a self-referential structure and please refer to week 1, day 2
 /// chapter for more information.

@@ -320,11 +320,7 @@ impl MiniLsm {
         self.inner.sync()
     }
 
-    pub fn scan(
-        &self,
-        lower: Bound<&[u8]>,
-        upper: Bound<&[u8]>,
-    ) -> Result<TxnIterator> {
+    pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
         self.inner.scan(lower, upper)
     }
 
@@ -371,7 +367,7 @@ impl LsmStorageInner {
         let mut state = LsmStorageState::create(&options);
         let mut next_sst_id = 1;
         let block_cache = Arc::new(BlockCache::new(1 << 20)); // 4GB block cache,
-        let mut latest_commit = 0 ; 
+        let mut latest_commit = 0;
         let manifest;
 
         let compaction_controller = match &options.compaction_options {
@@ -458,7 +454,7 @@ impl LsmStorageInner {
                     FileObject::open(&Self::path_of_sst_static(path, table_id))?,
                 )?;
 
-                latest_commit = latest_commit.max(table.max_ts()) ; 
+                latest_commit = latest_commit.max(table.max_ts());
                 state.sstables.insert(table_id, Arc::new(table));
             }
 
@@ -486,17 +482,15 @@ impl LsmStorageInner {
                         Self::path_of_wal_static(path, memtable_id),
                     )?;
 
-                    let mut iter = memtable.scan(Bound::Unbounded, Bound::Unbounded) ;
-                    while iter.is_valid() { 
-                        latest_commit = latest_commit.max(iter.key().ts()) ; 
-                        iter.next() ; 
+                    let mut iter = memtable.scan(Bound::Unbounded, Bound::Unbounded);
+                    while iter.is_valid() {
+                        latest_commit = latest_commit.max(iter.key().ts());
+                        iter.next();
                     }
 
                     if !memtable.is_empty() {
                         state.imm_memtables.insert(0, Arc::new(memtable));
-                    } 
-
-
+                    }
                 }
                 state.memtable = Arc::new(MemTable::create_with_wal(
                     next_sst_id,
@@ -539,7 +533,7 @@ impl LsmStorageInner {
 
     /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
     pub fn get(self: &Arc<Self>, key: &[u8]) -> Result<Option<Bytes>> {
-        let txn = self.mvcc().new_txn(self.clone(), self.options.serializable) ; 
+        let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
         txn.get(key)
     }
 
@@ -581,8 +575,7 @@ impl LsmStorageInner {
                     }
                 }
                 l0_iters.push(Box::new(SsTableIterator::create_and_seek_to_key(
-                    table,
-                    key_slice,
+                    table, key_slice,
                 )?));
             }
         }
@@ -609,8 +602,7 @@ impl LsmStorageInner {
             }
             if !level_ssts.is_empty() {
                 level_iters.push(Box::new(SstConcatIterator::create_and_seek_to_key(
-                    level_ssts,
-                    key_slice,
+                    level_ssts, key_slice,
                 )?));
             }
         }
@@ -640,7 +632,9 @@ impl LsmStorageInner {
             match record {
                 WriteBatchRecord::Put(key, value) => {
                     let guard = self.state.read();
-                    guard.memtable.put(KeySlice::from_slice(key.as_ref(), ts), value.as_ref())?;
+                    guard
+                        .memtable
+                        .put(KeySlice::from_slice(key.as_ref(), ts), value.as_ref())?;
                     if guard.memtable.approximate_size() > self.options.target_sst_size {
                         drop(guard);
                         let lock = self.state_lock.lock();
@@ -654,7 +648,9 @@ impl LsmStorageInner {
                 }
                 WriteBatchRecord::Del(key) => {
                     let guard = self.state.read();
-                    guard.memtable.put(KeySlice::from_slice(key.as_ref(), ts), b"")?;
+                    guard
+                        .memtable
+                        .put(KeySlice::from_slice(key.as_ref(), ts), b"")?;
                     if guard.memtable.approximate_size() > self.options.target_sst_size {
                         drop(guard);
                         let lock = self.state_lock.lock();
@@ -784,12 +780,8 @@ impl LsmStorageInner {
     }
 
     /// Create an iterator over a range of keys.
-    pub fn scan(
-        self: &Arc<Self>,
-        lower: Bound<&[u8]>,
-        upper: Bound<&[u8]>,
-    ) -> Result<TxnIterator> {
-        let txn = self.mvcc().new_txn(self.clone(), self.options.serializable) ; 
+    pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
+        let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
         txn.scan(lower, upper)
     }
 
@@ -822,9 +814,10 @@ impl LsmStorageInner {
                 table.last_key().as_key_slice(),
             ) {
                 let iter = match lower {
-                    Bound::Included(key) => {
-                        SsTableIterator::create_and_seek_to_key(table, KeySlice::from_slice(key, TS_RANGE_BEGIN))?
-                    }
+                    Bound::Included(key) => SsTableIterator::create_and_seek_to_key(
+                        table,
+                        KeySlice::from_slice(key, TS_RANGE_BEGIN),
+                    )?,
                     Bound::Excluded(key) => {
                         let mut iter = SsTableIterator::create_and_seek_to_key(
                             table,
@@ -850,9 +843,10 @@ impl LsmStorageInner {
                 sstables.push(table);
             }
             let iter = match lower {
-                Bound::Included(key) => {
-                    SstConcatIterator::create_and_seek_to_key(sstables, KeySlice::from_slice(key, TS_RANGE_BEGIN))?
-                }
+                Bound::Included(key) => SstConcatIterator::create_and_seek_to_key(
+                    sstables,
+                    KeySlice::from_slice(key, TS_RANGE_BEGIN),
+                )?,
                 Bound::Excluded(key) => {
                     let mut iter = SstConcatIterator::create_and_seek_to_key(
                         sstables,

@@ -25,7 +25,10 @@ use crate::{
     iterators::{
         StorageIterator, concat_iterator::SstConcatIterator, merge_iterator::MergeIterator,
         two_merge_iterator::TwoMergeIterator,
-    }, key::KeyBytes, mem_table::MemTableIterator, table::SsTableIterator
+    },
+    key::KeyBytes,
+    mem_table::MemTableIterator,
+    table::SsTableIterator,
 };
 
 /// Represents the internal type for an LSM iterator. This type will be changed across the course for multiple times.
@@ -43,7 +46,11 @@ pub struct LsmIterator {
 }
 
 impl LsmIterator {
-    pub(crate) fn new(iter: LsmIteratorInner, end_bound: Bound<Bytes>, read_ts: u64) -> Result<Self> {
+    pub(crate) fn new(
+        iter: LsmIteratorInner,
+        end_bound: Bound<Bytes>,
+        read_ts: u64,
+    ) -> Result<Self> {
         let mut iter = Self {
             is_valid: iter.is_valid(),
             inner: iter,
@@ -52,10 +59,7 @@ impl LsmIterator {
             prev_key: Vec::new(),
         };
 
-        // Initialize by skipping old versions and tombstones
-        if iter.is_valid() {
-            iter.move_to_key()?;
-        }
+        iter.move_to_key()?;
 
         Ok(iter)
     }
@@ -77,23 +81,18 @@ impl LsmIterator {
     /// Move to the next valid key, skipping old versions and tombstones based on read_ts
     fn move_to_key(&mut self) -> Result<()> {
         loop {
-            // Skip old versions of the same key that we've already returned
-            while self.inner.is_valid() && self.inner.key().key_ref() == self.prev_key.as_slice() {
+            while self.inner.is_valid() && self.inner.key().key_ref() == self.prev_key {
                 self.next_inner()?;
             }
             if !self.inner.is_valid() {
                 break;
             }
 
-            // Update prev_key to current key
             self.prev_key.clear();
             self.prev_key.extend(self.inner.key().key_ref());
 
-            // Skip versions with timestamps newer than read_ts (not committed yet)
-            // Only do this if read_ts > 0
             while self.inner.is_valid()
-                && self.inner.key().key_ref() == self.prev_key.as_slice()
-                && self.read_ts > 0
+                && self.inner.key().key_ref() == self.prev_key
                 && self.inner.key().ts() > self.read_ts
             {
                 self.next_inner()?;
@@ -103,23 +102,13 @@ impl LsmIterator {
                 break;
             }
 
-            // If key changed after skipping, continue loop to recheck
-            if self.inner.key().key_ref() != self.prev_key.as_slice() {
+            if self.inner.key().key_ref() != self.prev_key {
                 continue;
             }
 
-            // Check if current value is a tombstone - if so we need to skip to next key
-            if self.inner.value().is_empty() {
-                self.next_inner()?;
-                if !self.inner.is_valid() {
-                    break;
-                }
-                // Continue loop - check if we moved to next key or different version
-                continue;
+            if !self.inner.value().is_empty() {
+                break;
             }
-
-            // Found a valid key with non-empty value
-            break;
         }
         Ok(())
     }
