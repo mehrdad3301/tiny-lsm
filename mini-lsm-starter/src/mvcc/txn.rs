@@ -44,11 +44,14 @@ pub struct Transaction {
 
 impl Transaction {
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
-        unimplemented!()
+        self.inner.get_with_ts(key, self.read_ts)
     }
 
     pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
-        unimplemented!()
+        Ok(TxnIterator { 
+            txn: self.clone(), 
+            iter: self.inner.scan_with_ts(lower, upper, self.read_ts)?
+        })
     }
 
     pub fn put(&self, key: &[u8], value: &[u8]) {
@@ -104,16 +107,19 @@ impl StorageIterator for TxnLocalIterator {
 }
 
 pub struct TxnIterator {
-    _txn: Arc<Transaction>,
-    iter: TwoMergeIterator<TxnLocalIterator, FusedIterator<LsmIterator>>,
+    txn: Arc<Transaction>,
+    iter: FusedIterator<LsmIterator>,
 }
 
 impl TxnIterator {
     pub fn create(
         txn: Arc<Transaction>,
-        iter: TwoMergeIterator<TxnLocalIterator, FusedIterator<LsmIterator>>,
+        iter: FusedIterator<LsmIterator>,
     ) -> Result<Self> {
-        unimplemented!()
+        Ok(Self { 
+            txn, 
+            iter,
+        })
     }
 }
 
@@ -136,7 +142,7 @@ impl StorageIterator for TxnIterator {
     }
 
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        self.iter.next()
     }
 
     fn num_active_iterators(&self) -> usize {

@@ -23,12 +23,12 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 pub use builder::SsTableBuilder;
 use bytes::{Buf, BufMut};
 pub use iterator::SsTableIterator;
 
-use crate::block::{Block, SIZEOF_U32};
+use crate::block::{Block, SIZEOF_U32, SIZEOF_U64};
 use crate::key::{KeyBytes, KeySlice};
 use crate::lsm_storage::BlockCache;
 
@@ -48,7 +48,8 @@ impl BlockMeta {
     /// Encode block meta to a buffer.
     /// You may add extra fields to the buffer,
     /// in order to help keep track of `first_key` when decoding from the same buffer in the future.
-    pub fn encode_block_meta(block_meta: &[BlockMeta], buf: &mut Vec<u8>) {
+    /// Format: [num_blocks][offset,first_key,last_key...][checksum][max_ts]
+    pub fn encode_block_meta(block_meta: &[BlockMeta], buf: &mut Vec<u8>, max_ts: u64) {
         buf.put_u32(block_meta.len() as u32);
         let offset = buf.len();
         for meta in block_meta {
@@ -60,40 +61,36 @@ impl BlockMeta {
             buf.put_slice(meta.last_key.key_ref());
             buf.put_u64(meta.last_key.ts());
         }
+        buf.put_u64(max_ts);
         let checksum = crc32fast::hash(&buf[offset..]);
         buf.put_u32(checksum);
     }
 
     /// Decode block meta from a buffer.
-    pub fn decode_block_meta(mut buf: &[u8]) -> Vec<BlockMeta> {
-        let mut block_meta = vec![];
-
-        let num = buf.get_u32();
-        let checksum = crc32fast::hash(&buf[..(buf.len() - SIZEOF_U32)]);
+    pub fn decode_block_meta(mut buf: &[u8]) -> Result<(Vec<BlockMeta>, u64)> {
+        let mut block_meta = Vec::new();
+        let num = buf.get_u32() as usize;
+        let checksum = crc32fast::hash(&buf[..buf.remaining() - SIZEOF_U32]);
         for _ in 0..num {
             let offset = buf.get_u32() as usize;
-            let first_key_len = buf.get_u16();
-            let first_key = KeyBytes::from_bytes_with_ts(
-                buf.copy_to_bytes(first_key_len as usize),
-                buf.get_u64(),
-            );
-            let last_key_len = buf.get_u16();
-            let last_key = KeyBytes::from_bytes_with_ts(
-                buf.copy_to_bytes(last_key_len as usize),
-                buf.get_u64(),
-            );
+            let first_key_len = buf.get_u16() as usize;
+            let first_key =
+                KeyBytes::from_bytes_with_ts(buf.copy_to_bytes(first_key_len), buf.get_u64());
+            let last_key_len: usize = buf.get_u16() as usize;
+            let last_key =
+                KeyBytes::from_bytes_with_ts(buf.copy_to_bytes(last_key_len), buf.get_u64());
             block_meta.push(BlockMeta {
                 offset,
                 first_key,
                 last_key,
             });
         }
-
-        if !buf.get_u32().eq(&checksum) {
-            return vec![];
+        let max_ts = buf.get_u64();
+        if buf.get_u32() != checksum {
+            bail!("meta checksum mismatched");
         }
 
-        block_meta
+        Ok((block_meta, max_ts))
     }
 }
 
@@ -176,7 +173,7 @@ impl SsTable {
             bloom_filter_offset - block_meta_offset - size_u32,
         )?;
 
-        let block_meta = BlockMeta::decode_block_meta(raw_meta.as_slice());
+        let (block_meta, max_ts) = BlockMeta::decode_block_meta(raw_meta.as_slice())?;
 
         Ok(Self {
             file,
@@ -187,7 +184,7 @@ impl SsTable {
             id,
             block_meta,
             bloom: Some(bloom_filter),
-            max_ts: 0,
+            max_ts,
         })
     }
 

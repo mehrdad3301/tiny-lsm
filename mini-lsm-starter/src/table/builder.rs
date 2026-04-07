@@ -43,6 +43,7 @@ pub struct SsTableBuilder {
     pub(crate) meta: Vec<BlockMeta>,
     block_size: usize,
     key_hashes: Vec<u32>,
+    max_ts: u64,
 }
 
 impl SsTableBuilder {
@@ -56,6 +57,7 @@ impl SsTableBuilder {
             meta: Vec::new(),
             key_hashes: Vec::new(),
             block_size,
+            max_ts: 0,
         }
     }
 
@@ -66,6 +68,11 @@ impl SsTableBuilder {
     pub fn add(&mut self, key: KeySlice, value: &[u8]) {
         if self.first_key.is_empty() {
             self.first_key.set_from_slice(key);
+        }
+
+        // Track max timestamp
+        if key.ts() > self.max_ts {
+            self.max_ts = key.ts();
         }
 
         if self.builder.add(key, value) {
@@ -115,7 +122,7 @@ impl SsTableBuilder {
     ) -> Result<SsTable> {
         self.add_block();
         let meta_offset = self.data.len();
-        BlockMeta::encode_block_meta(&self.meta, &mut self.data);
+        BlockMeta::encode_block_meta(&self.meta, &mut self.data, self.max_ts);
         self.data.put_u32(meta_offset as u32);
 
         let bloom_filter = Bloom::build_from_key_hashes(

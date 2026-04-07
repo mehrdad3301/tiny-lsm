@@ -38,16 +38,17 @@ pub struct LsmIterator {
     inner: LsmIteratorInner,
     end_bound: Bound<Bytes>,
     is_valid: bool,
-    /// Track the previous user key to skip old versions in MVCC
+    read_ts: u64,
     prev_key: Vec<u8>,
 }
 
 impl LsmIterator {
-    pub(crate) fn new(iter: LsmIteratorInner, end_bound: Bound<Bytes>) -> Result<Self> {
+    pub(crate) fn new(iter: LsmIteratorInner, end_bound: Bound<Bytes>, read_ts: u64) -> Result<Self> {
         let mut iter = Self {
             is_valid: iter.is_valid(),
             inner: iter,
             end_bound,
+            read_ts,
             prev_key: Vec::new(),
         };
 
@@ -73,7 +74,7 @@ impl LsmIterator {
         Ok(())
     }
 
-    /// Move to the next valid key, skipping old versions and tombstones
+    /// Move to the next valid key, skipping old versions and tombstones based on read_ts
     fn move_to_key(&mut self) -> Result<()> {
         loop {
             // Skip old versions of the same key that we've already returned
@@ -87,6 +88,25 @@ impl LsmIterator {
             // Update prev_key to current key
             self.prev_key.clear();
             self.prev_key.extend(self.inner.key().key_ref());
+
+            // Skip versions with timestamps newer than read_ts (not committed yet)
+            // Only do this if read_ts > 0
+            while self.inner.is_valid()
+                && self.inner.key().key_ref() == self.prev_key.as_slice()
+                && self.read_ts > 0
+                && self.inner.key().ts() > self.read_ts
+            {
+                self.next_inner()?;
+            }
+
+            if !self.inner.is_valid() {
+                break;
+            }
+
+            // If key changed after skipping, continue loop to recheck
+            if self.inner.key().key_ref() != self.prev_key.as_slice() {
+                continue;
+            }
 
             // Check if current value is a tombstone - if so we need to skip to next key
             if self.inner.value().is_empty() {
