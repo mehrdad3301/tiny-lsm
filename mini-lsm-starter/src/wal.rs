@@ -48,15 +48,15 @@ impl Wal {
         file.read_to_end(&mut buf)?;
         let mut buf: &[u8] = buf.as_slice();
         while buf.has_remaining() {
-            let batch_size = buf.get_u32() as usize ;  
-            if buf.remaining() < batch_size { 
+            let batch_size = buf.get_u32() as usize;
+            if buf.remaining() < batch_size {
                 bail!("invalid batch")
             }
 
-            let mut batch = &buf[..batch_size] ; 
-            let calculated_checksum = crc32fast::hash(batch) ; 
+            let mut batch = &buf[..batch_size];
+            let calculated_checksum = crc32fast::hash(batch);
 
-            let mut data = Vec::new() ; 
+            let mut data = Vec::new();
             while batch.has_remaining() {
                 let key_len = batch.get_u16() as usize;
                 let key = Bytes::copy_from_slice(&batch[..key_len]);
@@ -65,9 +65,9 @@ impl Wal {
                 let value_len = batch.get_u16() as usize;
                 let value = Bytes::copy_from_slice(&batch[..value_len]);
                 batch.advance(value_len);
-                let key = KeyBytes::from_bytes_with_ts(key, ts) ; 
-                data.push((key, value)); 
-            } 
+                let key = KeyBytes::from_bytes_with_ts(key, ts);
+                data.push((key, value));
+            }
 
             buf.advance(batch_size);
             let checksum = buf.get_u32();

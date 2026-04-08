@@ -18,7 +18,7 @@
 use std::{
     collections::HashSet,
     ops::Bound,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, atomic::{AtomicBool, Ordering}},
 };
 
 use anyhow::Result;
@@ -32,7 +32,7 @@ use crate::{
     iterators::{StorageIterator, two_merge_iterator::TwoMergeIterator},
     lsm_iterator::{FusedIterator, LsmIterator},
     lsm_storage::{LsmStorageInner, WriteBatchRecord},
-    mem_table::map_bound,
+    mem_table::map_bound, mvcc::CommittedTxnData,
 };
 
 pub struct Transaction {
@@ -46,8 +46,13 @@ pub struct Transaction {
 
 impl Transaction {
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
-        if self.committed.load(std::sync::atomic::Ordering::SeqCst) {
+        if self.committed.load(Ordering::SeqCst) {
             panic!("attempted to modify a commited transaction !");
+        }
+
+        if let Some(key_hashes) = &self.key_hashes { 
+            key_hashes
+                .lock().1.insert(farmhash::hash32(key)) ; 
         }
 
         if let Some(entry) = self.local_storage.get(key) {
@@ -60,7 +65,7 @@ impl Transaction {
     }
 
     pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
-        if self.committed.load(std::sync::atomic::Ordering::SeqCst) {
+        if self.committed.load(Ordering::SeqCst) {
             panic!("attempted to modify a commited transaction !");
         }
 
@@ -79,12 +84,17 @@ impl Transaction {
     }
 
     pub fn put(&self, key: &[u8], value: &[u8]) {
-        if self.committed.load(std::sync::atomic::Ordering::SeqCst) {
+        if self.committed.load(Ordering::SeqCst) {
             panic!("attempted to modify a commited transaction !");
         }
 
         self.local_storage
             .insert(Bytes::copy_from_slice(key), Bytes::copy_from_slice(value));
+
+        if let Some(key_hashes) = &self.key_hashes { 
+            key_hashes
+                .lock().0.insert(farmhash::hash32(key)) ; 
+        }
     }
 
     pub fn delete(&self, key: &[u8]) {
@@ -93,20 +103,73 @@ impl Transaction {
 
     pub fn commit(&self) -> Result<()> {
         self.committed
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .expect("cannot operate on committed txn!");
 
-        let batch = self.local_storage  
+        // take the commit lock 
+        let _lock = self.inner.mvcc().commit_lock.lock();  
+
+        let commit_ts = self.inner.mvcc().latest_commit_ts() + 1 ; 
+
+        // check serializability  
+        if self.inner.options.serializable { 
+            if let Some(key_hashes) = &self.key_hashes {
+                let (write_set, read_set) = &*key_hashes.lock() ; 
+                let commited_txn = self.inner.mvcc().committed_txns.lock() ; 
+                if write_set.is_empty() { 
+                    return Ok(()) ; 
+                }
+
+                for (_, write_set) in commited_txn.range(
+                    (Bound::Excluded(self.read_ts), Bound::Excluded(commit_ts))) { 
+                    for keys in write_set.key_hashes.iter() { 
+                        if read_set.contains(keys) { 
+                            return Err(anyhow::anyhow!("serialization failure due to concurrent write-write conflict!"))
+                        }
+                    }
+                }
+            } else { 
+                panic!("serializability check is enabled but key_hashes is not initialized!") ;
+            }
+        }
+
+        // write commit batch 
+        let batch = self
+            .local_storage
             .iter()
-            .map(|x| { 
-                if x.value().is_empty() { 
+            .map(|x| {
+                if x.value().is_empty() {
                     WriteBatchRecord::Del(x.key().clone())
-                } else { 
+                } else {
                     WriteBatchRecord::Put(x.key().clone(), x.value().clone())
                 }
             })
-            .collect::<Vec<_>>() ;  
+            .collect::<Vec<_>>();
 
-        self.inner.write_batch(&batch)? ; 
+        self.inner.write_batch_inner(&batch)?;
+
+        if self.inner.options.serializable {
+
+            // add transaction data to mvcc 
+            let mut commited_txn = self.inner.mvcc().committed_txns.lock() ; 
+            commited_txn.insert(commit_ts, 
+                CommittedTxnData { 
+                    key_hashes: std::mem::take(&mut self.key_hashes.as_ref().unwrap().lock().0), 
+                    read_ts: self.read_ts, 
+                    commit_ts 
+                }
+            ); 
+
+            // garbage collect committed transactions
+            let watermark = self.inner.mvcc().watermark() ; 
+            while let Some(entry) = commited_txn.first_entry() {
+                if entry.get().commit_ts <= watermark {
+                    entry.remove() ;
+                } else {                    
+                    break ;
+                }
+            }
+        }
 
         Ok(())
     }
@@ -176,6 +239,7 @@ impl TxnIterator {
     ) -> Result<Self> {
         let mut txn_iter = Self { txn, iter };
         txn_iter.move_to_non_delete_key()?;
+        txn_iter.add_to_read_set();
         Ok(txn_iter)
     }
 
@@ -184,6 +248,14 @@ impl TxnIterator {
             self.iter.next()?;
         }
         Ok(())
+    } 
+
+    fn add_to_read_set(&self) { 
+        if self.is_valid() { 
+            if let Some(key_hashes) = &self.txn.key_hashes { 
+                key_hashes.lock().1.insert(farmhash::hash32(self.key())) ; 
+            }
+        }
     }
 }
 
@@ -207,7 +279,9 @@ impl StorageIterator for TxnIterator {
 
     fn next(&mut self) -> Result<()> {
         self.iter.next()?;
-        self.move_to_non_delete_key()
+        self.move_to_non_delete_key()?;
+        self.add_to_read_set();
+        Ok(())
     }
 
     fn num_active_iterators(&self) -> usize {

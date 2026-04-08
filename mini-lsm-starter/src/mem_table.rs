@@ -154,14 +154,14 @@ impl MemTable {
     /// Implement this in week 3, day 5; if you want to implement this earlier, use `&[u8]` as the key type.
     pub fn put_batch(&self, data: &[(KeySlice, &[u8])]) -> Result<()> {
         for (key, value) in data {
-            let key_bytes = key.to_key_vec().into_key_bytes() ; 
+            let key_bytes = key.to_key_vec().into_key_bytes();
             let size = key.key_len() + value.len();
             self.map.insert(key_bytes, Bytes::copy_from_slice(value));
             self.approximate_size
                 .fetch_add(size, std::sync::atomic::Ordering::Relaxed);
         }
         if let Some(wal) = &self.wal {
-            wal.put_batch(data)? ;
+            wal.put_batch(data)?;
         }
 
         Ok(())

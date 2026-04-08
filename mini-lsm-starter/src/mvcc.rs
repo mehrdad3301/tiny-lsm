@@ -53,7 +53,7 @@ impl LsmMvccInner {
             commit_lock: Mutex::new(()),
             ts: Arc::new(Mutex::new((initial_ts, Watermark::new()))),
             committed_txns: Arc::new(Mutex::new(BTreeMap::new())),
-        }
+        } 
     }
 
     pub fn latest_commit_ts(&self) -> u64 {
