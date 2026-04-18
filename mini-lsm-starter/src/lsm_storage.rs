@@ -45,7 +45,7 @@ use crate::manifest::{Manifest, ManifestRecord};
 use crate::mem_table::{MemTable, MemTableIterator};
 use crate::mvcc::LsmMvccInner;
 use crate::mvcc::txn::{Transaction, TxnIterator};
-use crate::table::{FileObject, SsTable, SsTableBuilder, SsTableIterator};
+use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
 
 pub type BlockCache = moka::sync::Cache<(usize, usize), Arc<Block>>;
 
@@ -441,21 +441,35 @@ impl LsmStorageInner {
                 }
             }
 
-            // load ssts and fill sstables map
-            for table_id in state
+            // collect all SST ids to open
+            let sst_ids: Vec<usize> = state
                 .l0_sstables
                 .iter()
                 .chain(state.levels.iter().flat_map(|(_, files)| files))
-            {
-                let table_id = *table_id;
-                let table = SsTable::open(
-                    table_id,
-                    Some(block_cache.clone()),
-                    FileObject::open(&Self::path_of_sst_static(path, table_id))?,
-                )?;
+                .copied()
+                .collect();
 
-                latest_commit = latest_commit.max(table.max_ts());
-                state.sstables.insert(table_id, Arc::new(table));
+            // open SSTs in parallel using tokio async I/O
+            if !sst_ids.is_empty() {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .context("failed to create tokio runtime")?;
+                let opened_ssts = rt.block_on(async {
+                    let futures = sst_ids.into_iter().map(|table_id| {
+                        let bc = block_cache.clone();
+                        let p = Self::path_of_sst_static(path, table_id);
+                        async move {
+                            let table = SsTable::open_async(table_id, Some(bc), &p).await?;
+                            Ok::<_, anyhow::Error>((table_id, Arc::new(table)))
+                        }
+                    });
+                    futures::future::try_join_all(futures).await
+                })?;
+                for (table_id, table) in opened_ssts {
+                    latest_commit = latest_commit.max(table.max_ts());
+                    state.sstables.insert(table_id, table);
+                }
             }
 
             next_sst_id += 1;
@@ -485,7 +499,7 @@ impl LsmStorageInner {
                     let mut iter = memtable.scan(Bound::Unbounded, Bound::Unbounded);
                     while iter.is_valid() {
                         latest_commit = latest_commit.max(iter.key().ts());
-                        iter.next();
+                        iter.next()?;
                     }
 
                     if !memtable.is_empty() {

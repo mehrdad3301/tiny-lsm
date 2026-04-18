@@ -152,6 +152,73 @@ impl SsTable {
         Self::open(0, None, file)
     }
 
+    /// Open SSTable from a file using async I/O for parallel recovery.
+    pub async fn open_async(
+        id: usize,
+        block_cache: Option<Arc<BlockCache>>,
+        path: impl AsRef<Path>,
+    ) -> Result<Self> {
+
+        async fn read_at(
+            file: &mut tokio::fs::File,
+            offset: u64,
+            len: usize,
+        ) -> Result<Vec<u8>> {
+            use tokio::io::{AsyncReadExt, AsyncSeekExt};
+            let mut buf = vec![0u8; len];
+            file.seek(std::io::SeekFrom::Start(offset)).await?;
+            file.read_exact(&mut buf).await?;
+            Ok(buf)
+        }
+
+        let mut file = tokio::fs::File::open(path.as_ref()).await?;
+        let size = file.metadata().await?.len();
+
+        let size_u32 = SIZEOF_U32 as u64;
+
+        // Read 1: bloom filter offset (last 4 bytes)
+        let buf_bloom_off = read_at(&mut file, size - size_u32, SIZEOF_U32).await?;
+        let bloom_filter_offset = (&buf_bloom_off[..]).get_u32() as u64;
+
+        // Read 2: bloom filter data
+        let buf_bloom = read_at(
+            &mut file,
+            bloom_filter_offset,
+            (size - bloom_filter_offset - size_u32) as usize,
+        )
+        .await?;
+        let bloom_filter = Bloom::decode(&buf_bloom)?;
+
+        // Read 3: block meta offset (4 bytes before bloom)
+        let buf_meta_off = read_at(&mut file, bloom_filter_offset - size_u32, SIZEOF_U32).await?;
+        let block_meta_offset = (&buf_meta_off[..]).get_u32() as u64;
+
+        // Read 4: raw block meta
+        let buf_meta = read_at(
+            &mut file,
+            block_meta_offset,
+            (bloom_filter_offset - block_meta_offset - size_u32) as usize,
+        )
+        .await?;
+        let (block_meta, max_ts) = BlockMeta::decode_block_meta(&buf_meta)?;
+
+        // Convert tokio file to std file for sync reads later
+        let std_file = file.into_std().await;
+        let file_object = FileObject(Some(std_file), size);
+
+        Ok(Self {
+            file: file_object,
+            first_key: block_meta.first().unwrap().first_key.clone(),
+            last_key: block_meta.last().unwrap().last_key.clone(),
+            block_meta_offset: block_meta_offset as usize,
+            block_cache,
+            id,
+            block_meta,
+            bloom: Some(bloom_filter),
+            max_ts,
+        })
+    }
+
     /// Open SSTable from a file.
     pub fn open(id: usize, block_cache: Option<Arc<BlockCache>>, file: FileObject) -> Result<Self> {
         let len = file.size();
