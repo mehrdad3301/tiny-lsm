@@ -541,86 +541,105 @@ impl LsmStorageInner {
         let snapshot = {
             let guard = self.state.read();
             Arc::clone(&guard)
-        }; // ??? why is lock dropped ???
+        };
 
-        // Use merge iterators to properly handle ordering
         let key_slice = KeySlice::from_slice(key, TS_RANGE_BEGIN);
-
-        // Create memtable iterators
-        let mut memtable_iters: Vec<Box<MemTableIterator>> = Vec::new();
-        memtable_iters.push(Box::new(snapshot.memtable.scan(
+        let key_range = (
             Bound::Included(KeySlice::from_slice(key, TS_RANGE_BEGIN)),
             Bound::Included(KeySlice::from_slice(key, TS_RANGE_END)),
-        )));
-        for memtable in snapshot.imm_memtables.iter() {
-            memtable_iters.push(Box::new(memtable.scan(
-                Bound::Included(KeySlice::from_slice(key, TS_RANGE_BEGIN)),
-                Bound::Included(KeySlice::from_slice(key, TS_RANGE_END)),
-            )));
-        }
-        let memtable_iter = MergeIterator::create(memtable_iters);
+        );
 
-        // Create L0 iterators
-        let mut l0_iters: Vec<Box<SsTableIterator>> = Vec::new();
+        // Search current memtable
+        let mut iter = snapshot.memtable.scan(key_range.0, key_range.1);
+        while iter.is_valid() && iter.key().key_ref() == key {
+            if iter.key().ts() <= read_ts {
+                return Ok(if iter.value().is_empty() {
+                    None
+                } else {
+                    Some(Bytes::copy_from_slice(iter.value()))
+                });
+            }
+            iter.next()?;
+        }
+
+        // Search immutable memtables (latest to earliest)
+        for memtable in snapshot.imm_memtables.iter() {
+            let mut iter = memtable.scan(key_range.0, key_range.1);
+            while iter.is_valid() && iter.key().key_ref() == key {
+                if iter.key().ts() <= read_ts {
+                    return Ok(if iter.value().is_empty() {
+                        None
+                    } else {
+                        Some(Bytes::copy_from_slice(iter.value()))
+                    });
+                }
+                iter.next()?;
+            }
+        }
+
+        // Search L0 SSTs
         for table_id in snapshot.l0_sstables.iter() {
             let table = snapshot.sstables.get(table_id).unwrap().clone();
-            if key_within(
+            if !key_within(
                 key,
                 table.first_key().as_key_slice(),
                 table.last_key().as_key_slice(),
             ) {
+                continue;
+            }
+            if let Some(bloom) = &table.bloom {
+                if !bloom.may_contain(farmhash::fingerprint32(key)) {
+                    continue;
+                }
+            }
+            let mut iter = SsTableIterator::create_and_seek_to_key(table, key_slice)?;
+            while iter.is_valid() && iter.key().key_ref() == key {
+                if iter.key().ts() <= read_ts {
+                    return Ok(if iter.value().is_empty() {
+                        None
+                    } else {
+                        Some(Bytes::copy_from_slice(iter.value()))
+                    });
+                }
+                iter.next()?;
+            }
+        }
+
+        // Search lower levels (L1, L2, ...)
+        for (_, level_sst_ids) in &snapshot.levels {
+            let mut level_ssts = Vec::new();
+            for table_id in level_sst_ids {
+                let table = snapshot.sstables.get(table_id).unwrap().clone();
+                if !key_within(
+                    key,
+                    table.first_key().as_key_slice(),
+                    table.last_key().as_key_slice(),
+                ) {
+                    continue;
+                }
                 if let Some(bloom) = &table.bloom {
                     if !bloom.may_contain(farmhash::fingerprint32(key)) {
                         continue;
                     }
                 }
-                l0_iters.push(Box::new(SsTableIterator::create_and_seek_to_key(
-                    table, key_slice,
-                )?));
+                level_ssts.push(table);
             }
-        }
-        let l0_iter = MergeIterator::create(l0_iters);
-
-        // Create level iterators
-        let mut level_iters: Vec<Box<SstConcatIterator>> = Vec::new();
-        for (_, level_sst_ids) in &snapshot.levels {
-            let mut level_ssts = Vec::new();
-            for table_id in level_sst_ids {
-                let table = snapshot.sstables.get(table_id).unwrap().clone();
-                if key_within(
-                    key,
-                    table.first_key().as_key_slice(),
-                    table.last_key().as_key_slice(),
-                ) {
-                    if let Some(bloom) = &table.bloom {
-                        if !bloom.may_contain(farmhash::fingerprint32(key)) {
-                            continue;
-                        }
-                    }
-                    level_ssts.push(table);
+            if level_ssts.is_empty() {
+                continue;
+            }
+            let mut iter = SstConcatIterator::create_and_seek_to_key(level_ssts, key_slice)?;
+            while iter.is_valid() && iter.key().key_ref() == key {
+                if iter.key().ts() <= read_ts {
+                    return Ok(if iter.value().is_empty() {
+                        None
+                    } else {
+                        Some(Bytes::copy_from_slice(iter.value()))
+                    });
                 }
-            }
-            if !level_ssts.is_empty() {
-                level_iters.push(Box::new(SstConcatIterator::create_and_seek_to_key(
-                    level_ssts, key_slice,
-                )?));
+                iter.next()?;
             }
         }
-        let level_iter = MergeIterator::create(level_iters);
 
-        // Merge all: memtable -> L0 -> levels
-        let iter = TwoMergeIterator::create(
-            TwoMergeIterator::create(memtable_iter, l0_iter)?,
-            level_iter,
-        )?;
-
-        // Use LsmIterator to properly handle MVCC (skip old versions and tombstones)
-        let iter = LsmIterator::new(iter, Bound::Unbounded, read_ts)?;
-
-        // Return the value if valid and not empty
-        if iter.is_valid() && iter.key() == key && !iter.value().is_empty() {
-            return Ok(Some(Bytes::copy_from_slice(iter.value())));
-        }
         Ok(None)
     }
 
