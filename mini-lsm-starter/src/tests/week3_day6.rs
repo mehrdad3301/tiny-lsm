@@ -23,100 +23,100 @@ use crate::{
     lsm_storage::{LsmStorageOptions, MiniLsm},
 };
 
-#[test]
-fn test_serializable_1() {
+#[tokio::test]
+async fn test_serializable_1() {
     let dir = tempdir().unwrap();
     let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
     options.serializable = true;
-    let storage = MiniLsm::open(&dir, options.clone()).unwrap();
-    storage.put(b"key1", b"1").unwrap();
-    storage.put(b"key2", b"2").unwrap();
+    let storage = MiniLsm::open(&dir, options.clone()).await.unwrap();
+    storage.put(b"key1", b"1").await.unwrap();
+    storage.put(b"key2", b"2").await.unwrap();
     let txn1 = storage.new_txn().unwrap();
     let txn2 = storage.new_txn().unwrap();
-    txn1.put(b"key1", &txn1.get(b"key2").unwrap().unwrap());
-    txn2.put(b"key2", &txn2.get(b"key1").unwrap().unwrap());
-    txn1.commit().unwrap();
-    assert!(dbg!(txn2.commit()).is_err());
+    txn1.put(b"key1", &txn1.get(b"key2").await.unwrap().unwrap());
+    txn2.put(b"key2", &txn2.get(b"key1").await.unwrap().unwrap());
+    txn1.commit().await.unwrap();
+    assert!(dbg!(txn2.commit().await).is_err());
     drop(txn2);
-    assert_eq!(storage.get(b"key1").unwrap(), Some(Bytes::from("2")));
-    assert_eq!(storage.get(b"key2").unwrap(), Some(Bytes::from("2")));
+    assert_eq!(storage.get(b"key1").await.unwrap(), Some(Bytes::from("2")));
+    assert_eq!(storage.get(b"key2").await.unwrap(), Some(Bytes::from("2")));
 }
 
-#[test]
-fn test_serializable_2() {
+#[tokio::test]
+async fn test_serializable_2() {
     let dir = tempdir().unwrap();
     let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
     options.serializable = true;
-    let storage = MiniLsm::open(&dir, options.clone()).unwrap();
+    let storage = MiniLsm::open(&dir, options.clone()).await.unwrap();
     let txn1 = storage.new_txn().unwrap();
     let txn2 = storage.new_txn().unwrap();
     txn1.put(b"key1", b"1");
     txn2.put(b"key1", b"2");
-    txn1.commit().unwrap();
-    txn2.commit().unwrap();
-    assert_eq!(storage.get(b"key1").unwrap(), Some(Bytes::from("2")));
+    txn1.commit().await.unwrap();
+    txn2.commit().await.unwrap();
+    assert_eq!(storage.get(b"key1").await.unwrap(), Some(Bytes::from("2")));
 }
 
-#[test]
-fn test_serializable_3_ts_range() {
+#[tokio::test]
+async fn test_serializable_3_ts_range() {
     let dir = tempdir().unwrap();
     let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
     options.serializable = true;
-    let storage = MiniLsm::open(&dir, options.clone()).unwrap();
-    storage.put(b"key1", b"1").unwrap();
-    storage.put(b"key2", b"2").unwrap();
+    let storage = MiniLsm::open(&dir, options.clone()).await.unwrap();
+    storage.put(b"key1", b"1").await.unwrap();
+    storage.put(b"key2", b"2").await.unwrap();
     let txn1 = storage.new_txn().unwrap();
-    txn1.put(b"key1", &txn1.get(b"key2").unwrap().unwrap());
-    txn1.commit().unwrap();
+    txn1.put(b"key1", &txn1.get(b"key2").await.unwrap().unwrap());
+    txn1.commit().await.unwrap();
     let txn2 = storage.new_txn().unwrap();
-    txn2.put(b"key2", &txn2.get(b"key1").unwrap().unwrap());
-    txn2.commit().unwrap();
+    txn2.put(b"key2", &txn2.get(b"key1").await.unwrap().unwrap());
+    txn2.commit().await.unwrap();
     drop(txn2);
-    assert_eq!(storage.get(b"key1").unwrap(), Some(Bytes::from("2")));
-    assert_eq!(storage.get(b"key2").unwrap(), Some(Bytes::from("2")));
+    assert_eq!(storage.get(b"key1").await.unwrap(), Some(Bytes::from("2")));
+    assert_eq!(storage.get(b"key2").await.unwrap(), Some(Bytes::from("2")));
 }
 
-#[test]
-fn test_serializable_4_scan() {
+#[tokio::test]
+async fn test_serializable_4_scan() {
     let dir = tempdir().unwrap();
     let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
     options.serializable = true;
-    let storage = MiniLsm::open(&dir, options.clone()).unwrap();
-    storage.put(b"key1", b"1").unwrap();
-    storage.put(b"key2", b"2").unwrap();
+    let storage = MiniLsm::open(&dir, options.clone()).await.unwrap();
+    storage.put(b"key1", b"1").await.unwrap();
+    storage.put(b"key2", b"2").await.unwrap();
     let txn1 = storage.new_txn().unwrap();
     let txn2 = storage.new_txn().unwrap();
-    txn1.put(b"key1", &txn1.get(b"key2").unwrap().unwrap());
-    txn1.commit().unwrap();
-    let mut iter = txn2.scan(Bound::Unbounded, Bound::Unbounded).unwrap();
+    txn1.put(b"key1", &txn1.get(b"key2").await.unwrap().unwrap());
+    txn1.commit().await.unwrap();
+    let mut iter = txn2.scan(Bound::Unbounded, Bound::Unbounded).await.unwrap();
     while iter.is_valid() {
         iter.next().unwrap();
     }
     txn2.put(b"key2", b"1");
-    assert!(dbg!(txn2.commit()).is_err());
+    assert!(dbg!(txn2.commit().await).is_err());
     drop(txn2);
-    assert_eq!(storage.get(b"key1").unwrap(), Some(Bytes::from("2")));
-    assert_eq!(storage.get(b"key2").unwrap(), Some(Bytes::from("2")));
+    assert_eq!(storage.get(b"key1").await.unwrap(), Some(Bytes::from("2")));
+    assert_eq!(storage.get(b"key2").await.unwrap(), Some(Bytes::from("2")));
 }
 
-#[test]
-fn test_serializable_5_read_only() {
+#[tokio::test]
+async fn test_serializable_5_read_only() {
     let dir = tempdir().unwrap();
     let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
     options.serializable = true;
-    let storage = MiniLsm::open(&dir, options.clone()).unwrap();
-    storage.put(b"key1", b"1").unwrap();
-    storage.put(b"key2", b"2").unwrap();
+    let storage = MiniLsm::open(&dir, options.clone()).await.unwrap();
+    storage.put(b"key1", b"1").await.unwrap();
+    storage.put(b"key2", b"2").await.unwrap();
     let txn1 = storage.new_txn().unwrap();
-    txn1.put(b"key1", &txn1.get(b"key2").unwrap().unwrap());
-    txn1.commit().unwrap();
+    txn1.put(b"key1", &txn1.get(b"key2").await.unwrap().unwrap());
+    txn1.commit().await.unwrap();
     let txn2 = storage.new_txn().unwrap();
-    txn2.get(b"key1").unwrap().unwrap();
-    let mut iter = txn2.scan(Bound::Unbounded, Bound::Unbounded).unwrap();
+    txn2.get(b"key1").await.unwrap().unwrap();
+    let mut iter = txn2.scan(Bound::Unbounded, Bound::Unbounded).await.unwrap();
     while iter.is_valid() {
         iter.next().unwrap();
     }
-    txn2.commit().unwrap();
-    assert_eq!(storage.get(b"key1").unwrap(), Some(Bytes::from("2")));
-    assert_eq!(storage.get(b"key2").unwrap(), Some(Bytes::from("2")));
+    txn2.commit().await.unwrap();
+    assert_eq!(storage.get(b"key1").await.unwrap(), Some(Bytes::from("2")));
+    assert_eq!(storage.get(b"key2").await.unwrap(), Some(Bytes::from("2")));
 }

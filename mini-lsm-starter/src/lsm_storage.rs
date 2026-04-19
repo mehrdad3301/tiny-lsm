@@ -26,7 +26,8 @@ use std::sync::atomic::AtomicUsize;
 use anyhow::{Context, Result};
 use bytes::{Buf, Bytes};
 use clap::error::ErrorKind;
-use parking_lot::{Mutex, MutexGuard, RwLock};
+use parking_lot::RwLock;
+use tokio::sync::{Mutex, MutexGuard};
 
 use farmhash;
 
@@ -45,9 +46,9 @@ use crate::manifest::{Manifest, ManifestRecord};
 use crate::mem_table::{MemTable, MemTableIterator};
 use crate::mvcc::LsmMvccInner;
 use crate::mvcc::txn::{Transaction, TxnIterator};
-use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
+use crate::table::{FileObject, SsTable, SsTableBuilder, SsTableIterator};
 
-pub type BlockCache = moka::sync::Cache<(usize, usize), Arc<Block>>;
+pub type BlockCache = moka::future::Cache<(usize, usize), Arc<Block>>;
 
 /// Represents the state of the storage engine.
 #[derive(Clone)]
@@ -197,7 +198,7 @@ pub enum CompactionFilter {
 /// The storage interface of the LSM tree.
 pub(crate) struct LsmStorageInner {
     pub(crate) state: Arc<RwLock<Arc<LsmStorageState>>>,
-    pub(crate) state_lock: Mutex<()>,
+    pub(crate) state_lock: tokio::sync::Mutex<()>,
     path: PathBuf,
     pub(crate) block_cache: Arc<BlockCache>,
     next_sst_id: AtomicUsize,
@@ -212,77 +213,62 @@ pub(crate) struct LsmStorageInner {
 pub struct MiniLsm {
     pub(crate) inner: Arc<LsmStorageInner>,
     /// Notifies the L0 flush thread to stop working. (In week 1 day 6)
-    flush_notifier: crossbeam_channel::Sender<()>,
+    flush_notifier: tokio::sync::mpsc::Sender<()>,
     /// The handle for the flush thread. (In week 1 day 6)
-    flush_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    flush_thread: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Notifies the compaction thread to stop working. (In week 2)
-    compaction_notifier: crossbeam_channel::Sender<()>,
+    compaction_notifier: tokio::sync::mpsc::Sender<()>,
     /// The handle for the compaction thread. (In week 2)
-    compaction_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
-}
-
-impl Drop for MiniLsm {
-    fn drop(&mut self) {
-        self.compaction_notifier.send(()).ok();
-        self.flush_notifier.send(()).ok();
-    }
+    compaction_thread: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl MiniLsm {
-    pub fn close(&self) -> Result<()> {
-        self.inner.sync_dir()?;
-        /// ??? why
+    pub async fn close(&self) -> Result<()> {
+        self.inner.sync_dir().await?;
         // wait for the flush thread to finish
-        self.flush_notifier.send(())?;
-        let mut flush_thread = self.flush_thread.lock();
+        let _ = self.flush_notifier.send(()).await;
+        let mut flush_thread = self.flush_thread.lock().await;
         if let Some(flush_thread) = flush_thread.take() {
-            flush_thread
-                .join()
-                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+            flush_thread.await?;
         }
 
         // wait for the compaction thread to finish
-        self.compaction_notifier.send(())?;
-        let mut compaction_thread = self.compaction_thread.lock();
+        let _ = self.compaction_notifier.send(()).await;
+        let mut compaction_thread = self.compaction_thread.lock().await;
         if let Some(compaction_thread) = compaction_thread.take() {
-            compaction_thread
-                .join()
-                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+            compaction_thread.await?;
         }
 
         if self.inner.options.enable_wal {
-            self.inner.sync()?;
-            self.inner.sync_dir()?;
+            self.inner.sync().await?;
+            self.inner.sync_dir().await?;
             return Ok(());
         }
 
         // flush all memtables if wal disabled
         if !self.inner.state.read().memtable.is_empty() {
-            {
-                let lock = self.inner.state_lock.lock();
-                self.inner.force_freeze_memtable(&lock)?;
-            } // lock dropped
+            self.inner.force_freeze_memtable().await?;
         }
 
         let mut remaining_tables = self.inner.state.read().imm_memtables.len();
         while remaining_tables != 0 {
-            self.inner.force_flush_next_imm_memtable()?;
+            self.inner.force_flush_next_imm_memtable().await?;
             remaining_tables -= 1;
         }
 
-        self.inner.sync_dir()?;
+        self.inner.sync_dir().await?;
 
         Ok(())
     }
 
     /// Start the storage engine by either loading an existing directory or creating a new one if the directory does
     /// not exist.
-    pub fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Arc<Self>> {
-        let inner = Arc::new(LsmStorageInner::open(path, options)?);
-        let (tx1, rx) = crossbeam_channel::unbounded();
-        let compaction_thread = inner.spawn_compaction_thread(rx)?;
-        let (tx2, rx) = crossbeam_channel::unbounded();
-        let flush_thread = inner.spawn_flush_thread(rx)?;
+    pub async fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Arc<Self>> {
+        let inner = Arc::new(LsmStorageInner::open(path, options).await?);
+        let (tx1, rx) = tokio::sync::mpsc::channel(1);
+        let compaction_thread = inner.spawn_compaction_task(rx).await?;
+        let (tx2, rx) = tokio::sync::mpsc::channel(1);
+        let flush_thread = inner.spawn_flush_task(rx).await?;
         Ok(Arc::new(Self {
             inner,
             flush_notifier: tx2,
@@ -296,57 +282,57 @@ impl MiniLsm {
         self.inner.new_txn()
     }
 
-    pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
-        self.inner.write_batch(batch)
+    pub async fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
+        self.inner.write_batch(batch).await
     }
 
-    pub fn add_compaction_filter(&self, compaction_filter: CompactionFilter) {
-        self.inner.add_compaction_filter(compaction_filter)
+    pub async fn add_compaction_filter(&self, compaction_filter: CompactionFilter) {
+        self.inner.add_compaction_filter(compaction_filter).await
     }
 
-    pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
-        self.inner.get(key)
+    pub async fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+        self.inner.get(key).await
     }
 
-    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        self.inner.put(key, value)
+    pub async fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        self.inner.put(key, value).await
     }
 
-    pub fn delete(&self, key: &[u8]) -> Result<()> {
-        self.inner.delete(key)
+    pub async fn delete(&self, key: &[u8]) -> Result<()> {
+        self.inner.delete(key).await
     }
 
-    pub fn sync(&self) -> Result<()> {
-        self.inner.sync()
+    pub async fn sync(&self) -> Result<()> {
+        self.inner.sync().await
     }
 
-    pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
-        self.inner.scan(lower, upper)
+    pub async fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
+        self.inner.scan(lower, upper).await
     }
 
-    pub fn scan_with_ts(
+    pub async fn scan_with_ts(
         &self,
         lower: Bound<&[u8]>,
         upper: Bound<&[u8]>,
         read_ts: u64,
     ) -> Result<FusedIterator<LsmIterator>> {
-        self.inner.scan_with_ts(lower, upper, read_ts)
+        self.inner.scan_with_ts(lower, upper, read_ts).await
     }
 
     /// Only call this in test cases due to race conditions
-    pub fn force_flush(&self) -> Result<()> {
+    pub async fn force_flush(&self) -> Result<()> {
         if !self.inner.state.read().memtable.is_empty() {
             self.inner
-                .force_freeze_memtable(&self.inner.state_lock.lock())?;
+                .force_freeze_memtable().await?;
         }
         if !self.inner.state.read().imm_memtables.is_empty() {
-            self.inner.force_flush_next_imm_memtable()?;
+            self.inner.force_flush_next_imm_memtable().await?;
         }
         Ok(())
     }
 
-    pub fn force_full_compaction(&self) -> Result<()> {
-        self.inner.force_full_compaction()
+    pub async fn force_full_compaction(&self) -> Result<()> {
+        self.inner.force_full_compaction().await
     }
 }
 
@@ -362,7 +348,7 @@ impl LsmStorageInner {
 
     /// Start the storage engine by either loading an existing directory or creating a new one if the directory does
     /// not exist.
-    pub(crate) fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Self> {
+    pub(crate) async fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Self> {
         let path = path.as_ref();
         let mut state = LsmStorageState::create(&options);
         let mut next_sst_id = 1;
@@ -384,22 +370,22 @@ impl LsmStorageInner {
         };
 
         if !path.exists() {
-            std::fs::create_dir_all(path).context("failed to create DB dir")?;
+            tokio::fs::create_dir_all(path).await.context("failed to create DB dir")?;
         }
 
         let manifest_path = path.join(Path::new("MANIFEST"));
         if !manifest_path.exists() {
-            manifest = Manifest::create(manifest_path).context("failed to create manifest")?;
+            manifest = Manifest::create(manifest_path).await.context("failed to create manifest")?;
             if options.enable_wal {
                 state.memtable = Arc::new(MemTable::create_with_wal(
                     state.memtable.id(),
                     Self::path_of_wal_static(path, state.memtable.id()),
-                )?)
+                ).await?)
             }
-            manifest.add_record_when_init(ManifestRecord::NewMemtable(state.memtable.id()))?;
+            manifest.add_record_when_init(ManifestRecord::NewMemtable(state.memtable.id())).await?;
         } else {
             // recover db if manifest exists
-            let (recovered_manifest, manifest_records) = Manifest::recover(manifest_path)?;
+            let (recovered_manifest, manifest_records) = Manifest::recover(manifest_path).await?;
             manifest = recovered_manifest;
             let mut memtables = BTreeSet::new();
             for record in manifest_records {
@@ -411,7 +397,7 @@ impl LsmStorageInner {
                         // try removing old ssts
                         for table_id in removed_files {
                             if let Err(err) =
-                                std::fs::remove_file(Self::path_of_sst_static(path, table_id))
+                                tokio::fs::remove_file(Self::path_of_sst_static(path, table_id)).await
                             {
                                 if err.kind() != std::io::ErrorKind::NotFound {
                                     return Err(err.into());
@@ -451,21 +437,16 @@ impl LsmStorageInner {
 
             // open SSTs in parallel using tokio async I/O
             if !sst_ids.is_empty() {
-                let rt = tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build()
-                    .context("failed to create tokio runtime")?;
-                let opened_ssts = rt.block_on(async {
-                    let futures = sst_ids.into_iter().map(|table_id| {
-                        let bc = block_cache.clone();
-                        let p = Self::path_of_sst_static(path, table_id);
-                        async move {
-                            let table = SsTable::open_async(table_id, Some(bc), &p).await?;
-                            Ok::<_, anyhow::Error>((table_id, Arc::new(table)))
-                        }
-                    });
-                    futures::future::try_join_all(futures).await
-                })?;
+                let futures = sst_ids.into_iter().map(|table_id| {
+                    let bc = block_cache.clone();
+                    let p = Self::path_of_sst_static(path, table_id);
+                    async move {
+                        let file = FileObject::open(&p).await?;
+                        let table = SsTable::open(table_id, Some(bc), file).await?;
+                        Ok::<_, anyhow::Error>((table_id, Arc::new(table)))
+                    }
+                });
+                let opened_ssts = futures::future::try_join_all(futures).await?;
                 for (table_id, table) in opened_ssts {
                     latest_commit = latest_commit.max(table.max_ts());
                     state.sstables.insert(table_id, table);
@@ -494,7 +475,7 @@ impl LsmStorageInner {
                     let memtable = MemTable::recover_from_wal(
                         memtable_id,
                         Self::path_of_wal_static(path, memtable_id),
-                    )?;
+                    ).await?;
 
                     let mut iter = memtable.scan(Bound::Unbounded, Bound::Unbounded);
                     while iter.is_valid() {
@@ -509,12 +490,12 @@ impl LsmStorageInner {
                 state.memtable = Arc::new(MemTable::create_with_wal(
                     next_sst_id,
                     Self::path_of_wal_static(path, next_sst_id),
-                )?);
+                ).await?);
             } else {
                 state.memtable = Arc::new(MemTable::create(next_sst_id));
             }
 
-            manifest.add_record_when_init(ManifestRecord::NewMemtable(state.memtable.id()))?;
+            manifest.add_record_when_init(ManifestRecord::NewMemtable(state.memtable.id())).await?;
             next_sst_id += 1;
         }
 
@@ -531,27 +512,27 @@ impl LsmStorageInner {
             compaction_filters: Arc::new(Mutex::new(Vec::new())),
         };
 
-        storage.sync_dir()?;
+        storage.sync_dir().await?;
 
         return Ok(storage);
     }
 
-    pub fn sync(&self) -> Result<()> {
-        self.state.read().memtable.sync_wal()
+    pub async fn sync(&self) -> Result<()> {
+        self.state.read().memtable.sync_wal().await
     }
 
-    pub fn add_compaction_filter(&self, compaction_filter: CompactionFilter) {
-        let mut compaction_filters = self.compaction_filters.lock();
+    pub async fn add_compaction_filter(&self, compaction_filter: CompactionFilter) {
+        let mut compaction_filters = self.compaction_filters.lock().await;
         compaction_filters.push(compaction_filter);
     }
 
     /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
-    pub fn get(self: &Arc<Self>, key: &[u8]) -> Result<Option<Bytes>> {
+    pub async fn get(self: &Arc<Self>, key: &[u8]) -> Result<Option<Bytes>> {
         let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
-        txn.get(key)
+        txn.get(key).await
     }
 
-    pub fn get_with_ts(&self, key: &[u8], read_ts: u64) -> Result<Option<Bytes>> {
+    pub async fn get_with_ts(&self, key: &[u8], read_ts: u64) -> Result<Option<Bytes>> {
         let snapshot = {
             let guard = self.state.read();
             Arc::clone(&guard)
@@ -606,7 +587,7 @@ impl LsmStorageInner {
                     continue;
                 }
             }
-            let mut iter = SsTableIterator::create_and_seek_to_key(table, key_slice)?;
+            let mut iter = SsTableIterator::create_and_seek_to_key(table, key_slice).await?;
             while iter.is_valid() && iter.key().key_ref() == key {
                 if iter.key().ts() <= read_ts {
                     return Ok(if iter.value().is_empty() {
@@ -641,7 +622,7 @@ impl LsmStorageInner {
             if level_ssts.is_empty() {
                 continue;
             }
-            let mut iter = SstConcatIterator::create_and_seek_to_key(level_ssts, key_slice)?;
+            let mut iter = SstConcatIterator::create_and_seek_to_key(level_ssts, key_slice).await?;
             while iter.is_valid() && iter.key().key_ref() == key {
                 if iter.key().ts() <= read_ts {
                     return Ok(if iter.value().is_empty() {
@@ -657,12 +638,12 @@ impl LsmStorageInner {
         Ok(None)
     }
 
-    pub fn write_batch<T: AsRef<[u8]>>(
+    pub async fn write_batch<T: AsRef<[u8]>>(
         self: &Arc<Self>,
         batch: &[WriteBatchRecord<T>],
     ) -> Result<()> {
         if !self.options.serializable {
-            self.write_batch_inner(batch)?;
+            self.write_batch_inner(batch).await?;
         } else {
             let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
             for record in batch {
@@ -675,14 +656,14 @@ impl LsmStorageInner {
                     }
                 }
             }
-            txn.commit()?;
+            txn.commit().await?;
         }
         Ok(())
     }
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.
-    pub fn write_batch_inner<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
-        let _lock = self.mvcc().write_lock.lock();
+    pub async fn write_batch_inner<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
+        let _lock = self.mvcc().write_lock.lock().await;
         let ts = self.mvcc().latest_commit_ts() + 1;
         for record in batch {
             match record {
@@ -690,15 +671,16 @@ impl LsmStorageInner {
                     let guard = self.state.read();
                     guard
                         .memtable
-                        .put(KeySlice::from_slice(key.as_ref(), ts), value.as_ref())?;
+                        .put(KeySlice::from_slice(key.as_ref(), ts), value.as_ref()).await?;
                     if guard.memtable.approximate_size() > self.options.target_sst_size {
                         drop(guard);
-                        let lock = self.state_lock.lock();
+                        let lock = self.state_lock.lock().await;
                         let guard = self.state.read();
                         // check again, another thread might have frozen memtable
                         if guard.memtable.approximate_size() > self.options.target_sst_size {
                             drop(guard);
-                            self.force_freeze_memtable(&lock)?;
+                            drop(lock);
+                            self.force_freeze_memtable().await?;
                         }
                     }
                 }
@@ -706,15 +688,16 @@ impl LsmStorageInner {
                     let guard = self.state.read();
                     guard
                         .memtable
-                        .put(KeySlice::from_slice(key.as_ref(), ts), b"")?;
+                        .put(KeySlice::from_slice(key.as_ref(), ts), b"").await?;
                     if guard.memtable.approximate_size() > self.options.target_sst_size {
                         drop(guard);
-                        let lock = self.state_lock.lock();
+                        let lock = self.state_lock.lock().await;
                         let guard = self.state.read();
                         // check again, another thread might have frozen memtable
                         if guard.memtable.approximate_size() > self.options.target_sst_size {
                             drop(guard);
-                            self.force_freeze_memtable(&lock)?;
+                            drop(lock);
+                            self.force_freeze_memtable().await?;
                         }
                     }
                 }
@@ -725,25 +708,25 @@ impl LsmStorageInner {
     }
 
     /// Put a key-value pair into the storage by writing into the current memtable.
-    pub fn put(self: &Arc<Self>, key: &[u8], value: &[u8]) -> Result<()> {
+    pub async fn put(self: &Arc<Self>, key: &[u8], value: &[u8]) -> Result<()> {
         if !self.options.serializable {
-            self.write_batch_inner(&[WriteBatchRecord::Put(key, value)])?;
+            self.write_batch_inner(&[WriteBatchRecord::Put(key, value)]).await?;
         } else {
             let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
             txn.put(key, value);
-            txn.commit()?;
+            txn.commit().await?;
         }
         Ok(())
     }
 
     /// Remove a key from the storage by writing an empty value.
-    pub fn delete(self: &Arc<Self>, key: &[u8]) -> Result<()> {
+    pub async fn delete(self: &Arc<Self>, key: &[u8]) -> Result<()> {
         if !self.options.serializable {
-            self.write_batch_inner(&[WriteBatchRecord::Del(key)])?;
+            self.write_batch_inner(&[WriteBatchRecord::Del(key)]).await?;
         } else {
             let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
             txn.delete(key);
-            txn.commit()?;
+            txn.commit().await?;
         }
         Ok(())
     }
@@ -764,18 +747,18 @@ impl LsmStorageInner {
         Self::path_of_wal_static(&self.path, id)
     }
 
-    pub(super) fn sync_dir(&self) -> Result<()> {
-        File::open(&self.path)?.sync_all()?;
+    pub(super) async fn sync_dir(&self) -> Result<()> {
+        tokio::fs::File::open(&self.path).await?.sync_all().await?;
         Ok(())
     }
 
     /// Force freeze the current memtable to an immutable memtable
-    pub fn force_freeze_memtable(&self, state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
+    pub async fn force_freeze_memtable(&self) -> Result<()> {
         // creating memtable before acquiring the lock
         let id = self.next_sst_id();
         let memtable;
         if self.options.enable_wal {
-            memtable = Arc::new(MemTable::create_with_wal(id, self.path_of_wal(id))?)
+            memtable = Arc::new(MemTable::create_with_wal(id, self.path_of_wal(id)).await?)
         } else {
             memtable = Arc::new(MemTable::create(id));
         }
@@ -789,35 +772,34 @@ impl LsmStorageInner {
             frozen_memtable
         };
 
-        frozen_memtable.sync_wal()?;
+        frozen_memtable.sync_wal().await?;
 
-        self.sync_dir()?;
+        self.sync_dir().await?;
 
         self.manifest
             .as_ref()
             .unwrap()
-            .add_record(&state_lock_observer, ManifestRecord::NewMemtable(id))?;
+            .add_record(ManifestRecord::NewMemtable(id)).await?;
 
         Ok(())
     }
 
     /// Force flush the earliest-created immutable memtable to disk
-    pub fn force_flush_next_imm_memtable(&self) -> Result<()> {
-        /// ??? why do we need state lock here ?
-        let lock = self.state_lock.lock();
+    pub async fn force_flush_next_imm_memtable(&self) -> Result<()> {
+        let _lock = self.state_lock.lock().await;
         let memtable = {
             let guard = self.state.read();
-            guard
-                .imm_memtables
-                .last()
-                .expect("no immutable memtables found during the flush")
-                .clone()
-        }; // lock is dropped here 
+            if let Some(memtable) = guard.imm_memtables.last() {
+                memtable.clone()
+            } else {
+                return Ok(());
+            }
+        }; // lock is dropped here
 
         let id = memtable.id();
         let mut builder = SsTableBuilder::new(self.options.block_size);
-        memtable.flush(&mut builder)?;
-        let table = builder.build(id, Some(self.block_cache.clone()), self.path_of_sst(id))?;
+        memtable.flush(&mut builder).await?;
+        let table = builder.build(id, Some(self.block_cache.clone()), self.path_of_sst(id)).await?;
         {
             let mut guard = self.state.write();
             let mut snapshot = guard.as_ref().clone();
@@ -832,15 +814,15 @@ impl LsmStorageInner {
         }
 
         if self.options.enable_wal {
-            std::fs::remove_file(self.path_of_wal(id))?;
+            tokio::fs::remove_file(self.path_of_wal(id)).await?;
         }
 
-        self.sync_dir()?;
+        self.sync_dir().await?;
 
         self.manifest
             .as_ref()
             .unwrap()
-            .add_record(&lock, ManifestRecord::Flush(id))?;
+            .add_record(ManifestRecord::Flush(id)).await?;
 
         Ok(())
     }
@@ -849,13 +831,16 @@ impl LsmStorageInner {
         Ok(self.mvcc().new_txn(self.clone(), self.options.serializable))
     }
 
-    /// Create an iterator over a range of keys.
-    pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
+    pub async fn scan(
+        self: &Arc<Self>,
+        lower: Bound<&[u8]>,
+        upper: Bound<&[u8]>,
+    ) -> Result<TxnIterator> {
         let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
-        txn.scan(lower, upper)
+        txn.scan(lower, upper).await
     }
 
-    pub fn scan_with_ts(
+    pub async fn scan_with_ts(
         &self,
         lower: Bound<&[u8]>,
         upper: Bound<&[u8]>,
@@ -864,7 +849,7 @@ impl LsmStorageInner {
         let snapshot = {
             let guard = self.state.read();
             Arc::clone(&guard)
-        }; // lock is dropped here 
+        }; // lock is dropped here
 
         let (begin, end) = map_range(lower, upper);
         let mut memtable_iters: Vec<Box<MemTableIterator>> = Vec::new();
@@ -887,18 +872,18 @@ impl LsmStorageInner {
                     Bound::Included(key) => SsTableIterator::create_and_seek_to_key(
                         table,
                         KeySlice::from_slice(key, TS_RANGE_BEGIN),
-                    )?,
+                    ).await?,
                     Bound::Excluded(key) => {
                         let mut iter = SsTableIterator::create_and_seek_to_key(
                             table,
                             KeySlice::from_slice(key, TS_RANGE_BEGIN),
-                        )?;
+                        ).await?;
                         if iter.is_valid() && iter.key().key_ref() == key {
                             iter.next()?;
                         }
                         iter
                     }
-                    Bound::Unbounded => SsTableIterator::create_and_seek_to_first(table)?,
+                    Bound::Unbounded => SsTableIterator::create_and_seek_to_first(table).await?,
                 };
 
                 l0_iters.push(Box::new(iter));
@@ -916,18 +901,18 @@ impl LsmStorageInner {
                 Bound::Included(key) => SstConcatIterator::create_and_seek_to_key(
                     sstables,
                     KeySlice::from_slice(key, TS_RANGE_BEGIN),
-                )?,
+                ).await?,
                 Bound::Excluded(key) => {
                     let mut iter = SstConcatIterator::create_and_seek_to_key(
                         sstables,
                         KeySlice::from_slice(key, TS_RANGE_BEGIN),
-                    )?;
+                    ).await?;
                     if iter.is_valid() && iter.key().key_ref() == key {
                         iter.next()?;
                     }
                     iter
                 }
-                Bound::Unbounded => SstConcatIterator::create_and_seek_to_first(sstables)?,
+                Bound::Unbounded => SstConcatIterator::create_and_seek_to_first(sstables).await?,
             };
             level_iters.push(Box::new(iter));
         }
@@ -943,7 +928,7 @@ impl LsmStorageInner {
             TwoMergeIterator::create(iters, level_iters)?,
             upper.map(|s| Bytes::copy_from_slice(s)),
             read_ts,
-        )?;
+        ).await?;
 
         Ok(FusedIterator::new(iters))
     }

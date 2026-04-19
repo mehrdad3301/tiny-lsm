@@ -22,27 +22,32 @@ use crate::{
     tests::harness::dump_files_in_dir,
 };
 
-#[test]
-fn test_task3_compaction_integration() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_task3_compaction_integration() {
     let dir = tempdir().unwrap();
     let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
     options.enable_wal = true;
-    let storage = MiniLsm::open(&dir, options.clone()).unwrap();
+    let storage = MiniLsm::open(&dir, options.clone()).await.unwrap();
     let _txn = storage.new_txn().unwrap();
     for i in 0..=20000 {
         storage
             .put(b"0", format!("{:02000}", i).as_bytes())
+            .await
             .unwrap();
+    } 
+
+    {
+        let _ = storage.inner.state_lock.lock() ;
+        while {
+            let snapshot = storage.inner.state.read();
+            !snapshot.imm_memtables.is_empty()
+        } {
+            storage.inner.force_flush_next_imm_memtable().await.unwrap();
+        }
     }
-    std::thread::sleep(Duration::from_secs(1)); // wait until all memtables flush
-    while {
-        let snapshot = storage.inner.state.read();
-        !snapshot.imm_memtables.is_empty()
-    } {
-        storage.inner.force_flush_next_imm_memtable().unwrap();
-    }
+
     assert!(storage.inner.state.read().l0_sstables.len() > 1);
-    storage.force_full_compaction().unwrap();
+    storage.force_full_compaction().await.unwrap();
     storage.dump_structure();
     dump_files_in_dir(&dir);
     assert!(storage.inner.state.read().l0_sstables.is_empty());
@@ -52,20 +57,21 @@ fn test_task3_compaction_integration() {
     for i in 0..=100 {
         storage
             .put(b"1", format!("{:02000}", i).as_bytes())
+            .await
             .unwrap();
     }
     storage
         .inner
-        .force_freeze_memtable(&storage.inner.state_lock.lock())
+        .force_freeze_memtable()
+        .await
         .unwrap();
-    std::thread::sleep(Duration::from_secs(1)); // wait until all memtables flush
     while {
         let snapshot = storage.inner.state.read();
         !snapshot.imm_memtables.is_empty()
     } {
-        storage.inner.force_flush_next_imm_memtable().unwrap();
+        storage.inner.force_flush_next_imm_memtable().await.unwrap();
     }
-    storage.force_full_compaction().unwrap();
+    storage.force_full_compaction().await.unwrap();
     storage.dump_structure();
     dump_files_in_dir(&dir);
     assert!(storage.inner.state.read().l0_sstables.is_empty());

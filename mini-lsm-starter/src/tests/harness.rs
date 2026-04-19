@@ -58,6 +58,7 @@ impl MockIterator {
     }
 }
 
+#[async_trait::async_trait]
 impl StorageIterator for MockIterator {
     type KeyType<'a> = KeySlice<'a>;
 
@@ -105,9 +106,9 @@ pub fn as_bytes(x: &[u8]) -> Bytes {
     Bytes::copy_from_slice(x)
 }
 
-pub fn check_iter_result_by_key<I>(iter: &mut I, expected: Vec<(Bytes, Bytes)>)
+pub async fn check_iter_result_by_key<I>(iter: &mut I, expected: Vec<(Bytes, Bytes)>)
 where
-    I: for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>,
+    I: for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>> + 'static,
 {
     for (k, v) in expected {
         assert!(iter.is_valid());
@@ -133,9 +134,9 @@ where
     );
 }
 
-pub fn check_iter_result_by_key_and_ts<I>(iter: &mut I, expected: Vec<((Bytes, u64), Bytes)>)
+pub async fn check_iter_result_by_key_and_ts<I>(iter: &mut I, expected: Vec<((Bytes, u64), Bytes)>)
 where
-    I: for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>,
+    I: for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>> + 'static,
 {
     for ((k, ts), v) in expected {
         assert!(iter.is_valid());
@@ -163,9 +164,9 @@ where
     assert!(!iter.is_valid());
 }
 
-pub fn check_lsm_iter_result_by_key<I>(iter: &mut I, expected: Vec<(Bytes, Bytes)>)
+pub async fn check_lsm_iter_result_by_key<I>(iter: &mut I, expected: Vec<(Bytes, Bytes)>)
 where
-    I: for<'a> StorageIterator<KeyType<'a> = &'a [u8]>,
+    I: for<'a> StorageIterator<KeyType<'a> = &'a [u8]> + 'static,
 {
     for (k, v) in expected {
         assert!(iter.is_valid());
@@ -188,7 +189,7 @@ where
     assert!(!iter.is_valid());
 }
 
-pub fn expect_iter_error(mut iter: impl StorageIterator) {
+pub async fn expect_iter_error(mut iter: impl StorageIterator) {
     loop {
         match iter.next() {
             Ok(_) if iter.is_valid() => continue,
@@ -198,7 +199,7 @@ pub fn expect_iter_error(mut iter: impl StorageIterator) {
     }
 }
 
-pub fn generate_sst(
+pub async fn generate_sst(
     id: usize,
     path: impl AsRef<Path>,
     data: Vec<(Bytes, Bytes)>,
@@ -208,10 +209,10 @@ pub fn generate_sst(
     for (key, value) in data {
         builder.add(KeySlice::for_testing_from_slice_no_ts(&key[..]), &value[..]);
     }
-    builder.build(id, block_cache, path.as_ref()).unwrap()
+    builder.build(id, block_cache, path.as_ref()).await.unwrap()
 }
 
-pub fn generate_sst_with_ts(
+pub async fn generate_sst_with_ts(
     id: usize,
     path: impl AsRef<Path>,
     data: Vec<((Bytes, u64), Bytes)>,
@@ -224,17 +225,18 @@ pub fn generate_sst_with_ts(
             &value[..],
         );
     }
-    builder.build(id, block_cache, path.as_ref()).unwrap()
+    builder.build(id, block_cache, path.as_ref()).await.unwrap()
 }
 
-pub fn sync(storage: &LsmStorageInner) {
+pub async fn sync(storage: &LsmStorageInner) {
     storage
-        .force_freeze_memtable(&storage.state_lock.lock())
+        .force_freeze_memtable()
+        .await
         .unwrap();
-    storage.force_flush_next_imm_memtable().unwrap();
+    storage.force_flush_next_imm_memtable().await.unwrap();
 }
 
-pub fn compaction_bench(storage: Arc<MiniLsm>) {
+pub async fn compaction_bench(storage: Arc<MiniLsm>) {
     let mut key_map = BTreeMap::<usize, usize>::new();
     let gen_key = |i| format!("{:010}", i); // 10B
     let gen_value = |i| format!("{:0110}", i); // 110B
@@ -248,22 +250,21 @@ pub fn compaction_bench(storage: Arc<MiniLsm>) {
             let version = key_map.get(&i).copied().unwrap_or_default() + 1;
             let value = gen_value(version);
             key_map.insert(i, version);
-            storage.put(key.as_bytes(), value.as_bytes()).unwrap();
+            storage.put(key.as_bytes(), value.as_bytes()).await.unwrap();
             max_key = max_key.max(i);
         }
     }
 
-    std::thread::sleep(Duration::from_secs(1)); // wait until all memtables flush
     while {
         let snapshot = storage.inner.state.read();
         !snapshot.imm_memtables.is_empty()
     } {
-        storage.inner.force_flush_next_imm_memtable().unwrap();
+        storage.inner.force_flush_next_imm_memtable().await.unwrap();
     }
 
     let mut prev_snapshot = storage.inner.state.read().clone();
     while {
-        std::thread::sleep(Duration::from_secs(1));
+        tokio::time::sleep(Duration::from_secs(1)).await;
         let snapshot = storage.inner.state.read().clone();
         let to_cont = prev_snapshot.levels != snapshot.levels
             || prev_snapshot.l0_sstables != snapshot.l0_sstables;
@@ -276,7 +277,7 @@ pub fn compaction_bench(storage: Arc<MiniLsm>) {
     let mut expected_key_value_pairs = Vec::new();
     for i in 0..(max_key + 40000) {
         let key = gen_key(i);
-        let value = storage.get(key.as_bytes()).unwrap();
+        let value = storage.get(key.as_bytes()).await.unwrap();
         if let Some(val) = key_map.get(&i) {
             let expected_value = gen_value(*val);
             assert_eq!(value, Some(Bytes::from(expected_value.clone())));
@@ -287,9 +288,9 @@ pub fn compaction_bench(storage: Arc<MiniLsm>) {
     }
 
     check_lsm_iter_result_by_key(
-        &mut storage.scan(Bound::Unbounded, Bound::Unbounded).unwrap(),
+        &mut storage.scan(Bound::Unbounded, Bound::Unbounded).await.unwrap(),
         expected_key_value_pairs,
-    );
+    ).await;
 
     storage.dump_structure();
 
@@ -298,7 +299,7 @@ pub fn compaction_bench(storage: Arc<MiniLsm>) {
     );
 }
 
-pub fn check_compaction_ratio(storage: Arc<MiniLsm>) {
+pub async fn check_compaction_ratio(storage: Arc<MiniLsm>) {
     let state = storage.inner.state.read().clone();
     let compaction_options = storage.inner.options.compaction_options.clone();
     let mut level_size = Vec::new();
@@ -321,6 +322,7 @@ pub fn check_compaction_ratio(storage: Arc<MiniLsm>) {
     };
     let num_iters = storage
         .scan(Bound::Unbounded, Bound::Unbounded)
+        .await
         .unwrap()
         .num_active_iterators();
     let num_memtables = storage.inner.state.read().imm_memtables.len() + 1;
@@ -440,13 +442,14 @@ pub fn dump_files_in_dir(path: impl AsRef<Path>) {
     }
 }
 
-pub fn construct_merge_iterator_over_storage(
+pub async fn construct_merge_iterator_over_storage(
     state: &LsmStorageState,
 ) -> MergeIterator<SsTableIterator> {
     let mut iters = Vec::new();
     for t in &state.l0_sstables {
         iters.push(Box::new(
             SsTableIterator::create_and_seek_to_first(state.sstables.get(t).cloned().unwrap())
+                .await
                 .unwrap(),
         ));
     }
@@ -454,6 +457,7 @@ pub fn construct_merge_iterator_over_storage(
         for f in files {
             iters.push(Box::new(
                 SsTableIterator::create_and_seek_to_first(state.sstables.get(f).cloned().unwrap())
+                    .await
                     .unwrap(),
             ));
         }

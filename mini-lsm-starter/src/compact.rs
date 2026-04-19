@@ -135,17 +135,20 @@ pub enum CompactionOptions {
 
 impl LsmStorageInner {
     /// ??? what is the following syntax ? vs StorageIterator
-    fn create_ssts_from_iter(
+    async fn create_ssts_from_iter<I>(
         &self,
-        mut iter: impl for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>,
+        mut iter: I,
         compact_to_bottom: bool,
-    ) -> Result<Vec<Arc<SsTable>>> {
+    ) -> Result<Vec<Arc<SsTable>>>
+    where
+        I: for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>> + Send + 'static,
+    {
         let mut builder = SsTableBuilder::new(self.options.block_size);
         let mut sstables = Vec::new();
         let mut prev_key = Vec::<u8>::new();
         let mut first_time_below_watermark = false;
         let watermark = self.mvcc().watermark();
-        let compaction_filters = self.compaction_filters.lock();
+        let compaction_filters = self.compaction_filters.lock().await;
 
         'outer: while iter.is_valid() {
             let same_as_prev = iter.key().key_ref() == prev_key;
@@ -160,10 +163,10 @@ impl LsmStorageInner {
                     continue;
                 }
 
-                for filter in &compaction_filters.clone() { 
+                for filter in &compaction_filters.clone() {
                       match filter {
                           CompactionFilter::Prefix(filter) => {
-                              if iter.key().key_ref().starts_with(&filter) { 
+                              if iter.key().key_ref().starts_with(&filter) {
                                     iter.next()?;
                                     continue 'outer;
                               }
@@ -192,7 +195,7 @@ impl LsmStorageInner {
                     id,
                     Some(self.block_cache.clone()),
                     self.path_of_sst(id),
-                )?));
+                ).await?));
             }
 
             if !same_as_prev {
@@ -209,13 +212,13 @@ impl LsmStorageInner {
                 id,
                 Some(self.block_cache.clone()),
                 self.path_of_sst(id),
-            )?));
+            ).await?));
         }
 
         Ok(sstables)
     }
 
-    fn compact(&self, task: &CompactionTask) -> Result<Vec<Arc<SsTable>>> {
+    async fn compact(&self, task: &CompactionTask) -> Result<Vec<Arc<SsTable>>> {
         let snapshot = {
             let guard = self.state.read();
             guard.clone()
@@ -242,7 +245,7 @@ impl LsmStorageInner {
                         let table = snapshot.sstables.get(id).unwrap().clone();
                         sstables.push(table);
                     }
-                    let upper_iter = SstConcatIterator::create_and_seek_to_first(sstables)?;
+                    let upper_iter = SstConcatIterator::create_and_seek_to_first(sstables).await?;
 
                     let mut sstables = Vec::with_capacity(lower_level_sst_ids.len());
                     for id in lower_level_sst_ids.iter() {
@@ -250,17 +253,17 @@ impl LsmStorageInner {
                         sstables.push(table);
                     }
 
-                    let lower_iter = SstConcatIterator::create_and_seek_to_first(sstables)?;
+                    let lower_iter = SstConcatIterator::create_and_seek_to_first(sstables).await?;
 
                     let iter = TwoMergeIterator::create(upper_iter, lower_iter)?;
-                    self.create_ssts_from_iter(iter, task.compact_to_bottom_level())
+                    self.create_ssts_from_iter(iter, task.compact_to_bottom_level()).await
                 } else {
                     let mut iters = Vec::with_capacity(upper_level_sst_ids.len());
                     for table in upper_level_sst_ids.iter() {
                         if let Some(table) = snapshot.sstables.get(table) {
                             iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
                                 Arc::clone(table),
-                            )?));
+                            ).await?));
                         }
                     }
                     let upper_iter = MergeIterator::create(iters);
@@ -271,10 +274,10 @@ impl LsmStorageInner {
                         sstables.push(table);
                     }
 
-                    let lower_iter = SstConcatIterator::create_and_seek_to_first(sstables)?;
+                    let lower_iter = SstConcatIterator::create_and_seek_to_first(sstables).await?;
 
                     let iter = TwoMergeIterator::create(upper_iter, lower_iter)?;
-                    self.create_ssts_from_iter(iter, task.compact_to_bottom_level())
+                    self.create_ssts_from_iter(iter, task.compact_to_bottom_level()).await
                 }
             }
 
@@ -288,10 +291,10 @@ impl LsmStorageInner {
                     }
                     iters.push(Box::new(SstConcatIterator::create_and_seek_to_first(
                         sstables,
-                    )?))
+                    ).await?))
                 }
                 let iters = MergeIterator::create(iters);
-                self.create_ssts_from_iter(iters, task.compact_to_bottom_level())
+                self.create_ssts_from_iter(iters, task.compact_to_bottom_level()).await
             }
             CompactionTask::ForceFullCompaction {
                 l0_sstables,
@@ -302,7 +305,7 @@ impl LsmStorageInner {
                     if let Some(table) = snapshot.sstables.get(table) {
                         iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
                             Arc::clone(table),
-                        )?));
+                        ).await?));
                     }
                 }
                 let upper_iter = MergeIterator::create(iters);
@@ -313,33 +316,33 @@ impl LsmStorageInner {
                     sstables.push(table);
                 }
 
-                let lower_iter = SstConcatIterator::create_and_seek_to_first(sstables)?;
+                let lower_iter = SstConcatIterator::create_and_seek_to_first(sstables).await?;
 
                 let iter = TwoMergeIterator::create(upper_iter, lower_iter)?;
-                self.create_ssts_from_iter(iter, task.compact_to_bottom_level())
+                self.create_ssts_from_iter(iter, task.compact_to_bottom_level()).await
             }
         }
     }
 
-    pub fn force_full_compaction(&self) -> Result<()> {
+    pub async fn force_full_compaction(&self) -> Result<()> {
         let ssts_to_compact = {
             let guard = self.state.read();
             (guard.l0_sstables.clone(), guard.levels[0].1.clone())
-        }; // lock is dropped here 
+        }; // lock is dropped here
 
         let task = CompactionTask::ForceFullCompaction {
             l0_sstables: ssts_to_compact.0.clone(),
             l1_sstables: ssts_to_compact.1.clone(),
         };
 
-        let generated_sstables = self.compact(&task)?;
+        let generated_sstables = self.compact(&task).await?;
         let generated_sstable_ids = generated_sstables
             .iter()
             .map(|x| x.sst_id())
             .collect::<Vec<_>>();
 
         {
-            let lock = self.state_lock.lock();
+            let _lock = self.state_lock.lock().await;
             let mut snapshot = self.state.read().as_ref().clone();
             snapshot.levels[0].1 = Vec::with_capacity(generated_sstables.len());
             for table in generated_sstables {
@@ -362,23 +365,22 @@ impl LsmStorageInner {
                 .collect();
 
             *self.state.write() = Arc::new(snapshot);
-            self.sync_dir()?;
+            self.sync_dir().await?;
             self.manifest.as_ref().unwrap().add_record(
-                &lock,
                 ManifestRecord::Compaction(task, generated_sstable_ids),
-            )?;
+            ).await?;
         }
 
         for table_id in ssts_to_compact.0.iter().chain(ssts_to_compact.1.iter()) {
-            std::fs::remove_file(self.path_of_sst(*table_id))?;
+            tokio::fs::remove_file(self.path_of_sst(*table_id)).await?;
         }
 
-        self.sync_dir()?;
+        self.sync_dir().await?;
 
         Ok(())
     }
 
-    fn trigger_compaction(&self) -> Result<()> {
+    async fn trigger_compaction(&self) -> Result<()> {
         let snapshot = {
             let guard = self.state.read();
             guard.clone()
@@ -388,16 +390,16 @@ impl LsmStorageInner {
             .compaction_controller
             .generate_compaction_task(&snapshot)
         {
-            let generated_sstables = self.compact(&task)?;
+            let generated_sstables = self.compact(&task).await?;
             let generated_sstable_ids = generated_sstables
                 .iter()
                 .map(|x| x.sst_id())
                 .collect::<Vec<_>>();
 
             let sstables_to_remove = {
-                let lock = self.state_lock.lock();
+                let _lock = self.state_lock.lock().await;
                 let mut snapshot = self.state.read().as_ref().clone();
-                /// ??? what happens to the readers when we modify snapshot ???
+                // ??? what happens to the readers when we modify snapshot ???
                 for table in generated_sstables {
                     let result = snapshot.sstables.insert(table.sst_id(), table);
                     assert!(result.is_none());
@@ -414,11 +416,10 @@ impl LsmStorageInner {
 
                 *self.state.write() = Arc::new(snapshot);
 
-                self.sync_dir()?;
+                self.sync_dir().await?;
                 self.manifest.as_ref().unwrap().add_record(
-                    &lock,
                     ManifestRecord::Compaction(task, generated_sstable_ids.clone()),
-                )?;
+                ).await?;
 
                 sstables_to_remove
             };
@@ -431,32 +432,32 @@ impl LsmStorageInner {
             );
 
             for table_id in sstables_to_remove.iter() {
-                std::fs::remove_file(self.path_of_sst(*table_id))?;
+                tokio::fs::remove_file(self.path_of_sst(*table_id)).await?;
             }
 
-            self.sync_dir()?;
+            self.sync_dir().await?;
         }
 
         Ok(())
     }
 
-    pub(crate) fn spawn_compaction_thread(
+    pub(crate) async fn spawn_compaction_task(
         self: &Arc<Self>,
-        rx: crossbeam_channel::Receiver<()>,
-    ) -> Result<Option<std::thread::JoinHandle<()>>> {
+        mut rx: tokio::sync::mpsc::Receiver<()>,
+    ) -> Result<Option<tokio::task::JoinHandle<()>>> {
         if let CompactionOptions::Leveled(_)
         | CompactionOptions::Simple(_)
         | CompactionOptions::Tiered(_) = self.options.compaction_options
         {
             let this = self.clone();
-            let handle = std::thread::spawn(move || {
-                let ticker = crossbeam_channel::tick(Duration::from_millis(50));
+            let handle = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_millis(50));
                 loop {
-                    crossbeam_channel::select! {
-                        recv(ticker) -> _ => if let Err(e) = this.trigger_compaction() {
+                    tokio::select! {
+                        _ = interval.tick() => if let Err(e) = this.trigger_compaction().await {
                             eprintln!("compaction failed: {}", e);
                         },
-                        recv(rx) -> _ => return
+                        _ = rx.recv() => return
                     }
                 }
             });
@@ -465,32 +466,32 @@ impl LsmStorageInner {
         Ok(None)
     }
 
-    fn trigger_flush(&self) -> Result<()> {
+    async fn trigger_flush(&self) -> Result<()> {
         let imm_memtables_len = {
             let guard = self.state.read();
             guard.imm_memtables.len()
-        }; // lock is dropped here 
+        }; // lock is dropped here
 
         if imm_memtables_len >= self.options.num_memtable_limit {
-            self.force_flush_next_imm_memtable()?
+            self.force_flush_next_imm_memtable().await?
         }
 
         Ok(())
     }
 
-    pub(crate) fn spawn_flush_thread(
+    pub(crate) async fn spawn_flush_task(
         self: &Arc<Self>,
-        rx: crossbeam_channel::Receiver<()>,
-    ) -> Result<Option<std::thread::JoinHandle<()>>> {
+        mut rx: tokio::sync::mpsc::Receiver<()>,
+    ) -> Result<Option<tokio::task::JoinHandle<()>>> {
         let this = self.clone();
-        let handle = std::thread::spawn(move || {
-            let ticker = crossbeam_channel::tick(Duration::from_millis(50));
+        let handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(50));
             loop {
-                crossbeam_channel::select! {
-                    recv(ticker) -> _ => if let Err(e) = this.trigger_flush() {
+                tokio::select! {
+                    _ = interval.tick() => if let Err(e) = this.trigger_flush().await {
                         eprintln!("flush failed: {}", e);
                     },
-                    recv(rx) -> _ => return
+                    _ = rx.recv() => return
                 }
             }
         });

@@ -22,11 +22,11 @@ use crate::{
 
 use super::harness::{check_iter_result_by_key, construct_merge_iterator_over_storage};
 
-#[test]
-fn test_task3_mvcc_compaction() {
+#[tokio::test]
+async fn test_task3_mvcc_compaction() {
     let dir = tempdir().unwrap();
     let options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
-    let storage = MiniLsm::open(&dir, options.clone()).unwrap();
+    let storage = MiniLsm::open(&dir, options.clone()).await.unwrap();
     storage
         .write_batch(&[
             WriteBatchRecord::Put("table1_a", "1"),
@@ -36,8 +36,9 @@ fn test_task3_mvcc_compaction() {
             WriteBatchRecord::Put("table2_b", "1"),
             WriteBatchRecord::Put("table2_c", "1"),
         ])
+        .await
         .unwrap();
-    storage.force_flush().unwrap();
+    storage.force_flush().await.unwrap();
     let snapshot0 = storage.new_txn().unwrap();
     storage
         .write_batch(&[
@@ -48,12 +49,13 @@ fn test_task3_mvcc_compaction() {
             WriteBatchRecord::Del("table2_b"),
             WriteBatchRecord::Put("table2_c", "2"),
         ])
+        .await
         .unwrap();
-    storage.force_flush().unwrap();
-    storage.add_compaction_filter(CompactionFilter::Prefix(Bytes::from("table2_")));
-    storage.force_full_compaction().unwrap();
+    storage.force_flush().await.unwrap();
+    storage.add_compaction_filter(CompactionFilter::Prefix(Bytes::from("table2_"))).await;
+    storage.force_full_compaction().await.unwrap();
 
-    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read());
+    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read()).await;
     check_iter_result_by_key(
         &mut iter,
         vec![
@@ -67,18 +69,20 @@ fn test_task3_mvcc_compaction() {
             (Bytes::from("table2_b"), Bytes::new()),
             (Bytes::from("table2_c"), Bytes::from("2")),
         ],
-    );
+    )
+    .await;
 
     drop(snapshot0);
 
-    storage.force_full_compaction().unwrap();
+    storage.force_full_compaction().await.unwrap();
 
-    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read());
+    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read()).await;
     check_iter_result_by_key(
         &mut iter,
         vec![
             (Bytes::from("table1_a"), Bytes::from("2")),
             (Bytes::from("table1_c"), Bytes::from("2")),
         ],
-    );
+    )
+    .await;
 }

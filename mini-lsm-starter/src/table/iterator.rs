@@ -31,32 +31,46 @@ pub struct SsTableIterator {
 
 impl SsTableIterator {
     /// Create a new iterator and seek to the first key-value pair in the first data block.
-    pub fn create_and_seek_to_first(table: Arc<SsTable>) -> Result<Self> {
+    pub async fn create_and_seek_to_first(table: Arc<SsTable>) -> Result<Self> {
         Ok(Self {
-            blk_iter: BlockIterator::create_and_seek_to_first(table.read_block_cached(0)?),
+            blk_iter: BlockIterator::create_and_seek_to_first(table.read_block_cached(0).await?),
+            table,
+            blk_idx: 0,
+        })
+    }
+
+    /// Synchronous version: Create a new iterator and seek to the first key-value pair.
+    /// Uses blocking read.
+    pub fn create_and_seek_to_first_sync(table: Arc<SsTable>) -> Result<Self> {
+        // Use tokio::task::block_in_place for blocking I/O
+        let block = tokio::task::block_in_place(|| {
+            futures::executor::block_on(table.read_block(0))
+        })?;
+        Ok(Self {
+            blk_iter: BlockIterator::create_and_seek_to_first(block),
             table,
             blk_idx: 0,
         })
     }
 
     /// Seek to the first key-value pair in the first data block.
-    pub fn seek_to_first(&mut self) -> Result<()> {
-        self.blk_iter = BlockIterator::create_and_seek_to_first(self.table.read_block_cached(0)?);
+    pub async fn seek_to_first(&mut self) -> Result<()> {
+        self.blk_iter = BlockIterator::create_and_seek_to_first(self.table.read_block_cached(0).await?);
         self.blk_idx = 0;
         Ok(())
     }
 
     /// Create a new iterator and seek to the first key-value pair which >= `key`.
-    pub fn create_and_seek_to_key(table: Arc<SsTable>, key: KeySlice) -> Result<Self> {
+    pub async fn create_and_seek_to_key(table: Arc<SsTable>, key: KeySlice<'_>) -> Result<Self> {
         let mut blk_idx = table.find_block_idx(key);
         let mut blk_iter =
-            BlockIterator::create_and_seek_to_key(table.read_block_cached(blk_idx)?, key);
+            BlockIterator::create_and_seek_to_key(table.read_block_cached(blk_idx).await?, key);
 
         if !blk_iter.is_valid() {
             blk_idx += 1;
             if blk_idx < table.num_of_blocks() {
                 blk_iter =
-                    BlockIterator::create_and_seek_to_first(table.read_block_cached(blk_idx)?);
+                    BlockIterator::create_and_seek_to_first(table.read_block_cached(blk_idx).await?);
             }
         }
 
@@ -70,16 +84,16 @@ impl SsTableIterator {
     /// Seek to the first key-value pair which >= `key`.
     /// Note: You probably want to review the handout for detailed explanation when implementing
     /// this function.
-    pub fn seek_to_key(&mut self, key: KeySlice) -> Result<()> {
+    pub async fn seek_to_key(&mut self, key: KeySlice<'_>) -> Result<()> {
         self.blk_idx = self.table.find_block_idx(key);
         self.blk_iter =
-            BlockIterator::create_and_seek_to_key(self.table.read_block_cached(self.blk_idx)?, key);
+            BlockIterator::create_and_seek_to_key(self.table.read_block_cached(self.blk_idx).await?, key);
 
         if !self.blk_iter.is_valid() {
             self.blk_idx += 1;
             if self.blk_idx < self.table.num_of_blocks() {
                 self.blk_iter = BlockIterator::create_and_seek_to_first(
-                    self.table.read_block_cached(self.blk_idx)?,
+                    self.table.read_block_cached(self.blk_idx).await?,
                 );
             }
         }
@@ -112,7 +126,10 @@ impl StorageIterator for SsTableIterator {
         if !self.blk_iter.is_valid() {
             self.blk_idx += 1;
             if self.blk_idx < self.table.num_of_blocks() {
-                let blk = self.table.read_block(self.blk_idx)?;
+                // Use blocking read - this will load from cache or disk
+                let blk = tokio::task::block_in_place(|| {
+                    futures::executor::block_on(self.table.read_block(self.blk_idx))
+                })?;
                 self.blk_iter = BlockIterator::create_and_seek_to_first(blk);
             }
         }

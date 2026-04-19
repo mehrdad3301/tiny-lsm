@@ -27,13 +27,13 @@ use crate::{
 
 use super::harness::{MockIterator, check_iter_result_by_key, expect_iter_error};
 
-#[test]
-fn test_task1_memtable_iter() {
+#[tokio::test]
+async fn test_task1_memtable_iter() {
     use std::ops::Bound;
     let memtable = MemTable::create(0);
-    memtable.for_testing_put_slice(b"key1", b"value1").unwrap();
-    memtable.for_testing_put_slice(b"key2", b"value2").unwrap();
-    memtable.for_testing_put_slice(b"key3", b"value3").unwrap();
+    memtable.for_testing_put_slice(b"key1", b"value1").await.unwrap();
+    memtable.for_testing_put_slice(b"key2", b"value2").await.unwrap();
+    memtable.for_testing_put_slice(b"key3", b"value3").await.unwrap();
 
     {
         let mut iter = memtable.for_testing_scan_slice(Bound::Unbounded, Bound::Unbounded);
@@ -77,8 +77,8 @@ fn test_task1_memtable_iter() {
     }
 }
 
-#[test]
-fn test_task1_empty_memtable_iter() {
+#[tokio::test]
+async fn test_task1_empty_memtable_iter() {
     use std::ops::Bound;
     let memtable = MemTable::create(0);
     {
@@ -97,8 +97,8 @@ fn test_task1_empty_memtable_iter() {
     }
 }
 
-#[test]
-fn test_task2_merge_1() {
+#[tokio::test]
+async fn test_task2_merge_1() {
     let i1 = MockIterator::new(vec![
         (Bytes::from("a"), Bytes::from("1.1")),
         (Bytes::from("b"), Bytes::from("2.1")),
@@ -132,7 +132,7 @@ fn test_task2_merge_1() {
             (Bytes::from("d"), Bytes::from("4.2")),
             (Bytes::from("e"), Bytes::new()),
         ],
-    );
+    ).await;
 
     let mut iter = MergeIterator::create(vec![Box::new(i3), Box::new(i1), Box::new(i2)]);
 
@@ -145,11 +145,11 @@ fn test_task2_merge_1() {
             (Bytes::from("d"), Bytes::from("4.3")),
             (Bytes::from("e"), Bytes::new()),
         ],
-    );
+    ).await;
 }
 
-#[test]
-fn test_task2_merge_2() {
+#[tokio::test]
+async fn test_task2_merge_2() {
     let i1 = MockIterator::new(vec![
         (Bytes::from("a"), Bytes::from("1.1")),
         (Bytes::from("b"), Bytes::from("2.1")),
@@ -188,7 +188,7 @@ fn test_task2_merge_2() {
         Box::new(i3.clone()),
         Box::new(i4.clone()),
     ]);
-    check_iter_result_by_key(&mut iter, result.clone());
+    check_iter_result_by_key(&mut iter, result.clone()).await;
 
     let mut iter = MergeIterator::create(vec![
         Box::new(i2.clone()),
@@ -196,17 +196,17 @@ fn test_task2_merge_2() {
         Box::new(i3.clone()),
         Box::new(i1.clone()),
     ]);
-    check_iter_result_by_key(&mut iter, result.clone());
+    check_iter_result_by_key(&mut iter, result.clone()).await;
 
     let mut iter =
         MergeIterator::create(vec![Box::new(i4), Box::new(i3), Box::new(i2), Box::new(i1)]);
-    check_iter_result_by_key(&mut iter, result);
+    check_iter_result_by_key(&mut iter, result).await;
 }
 
-#[test]
-fn test_task2_merge_empty() {
+#[tokio::test]
+async fn test_task2_merge_empty() {
     let mut iter = MergeIterator::<MockIterator>::create(vec![]);
-    check_iter_result_by_key(&mut iter, vec![]);
+    check_iter_result_by_key(&mut iter, vec![]).await;
 
     let i1 = MockIterator::new(vec![
         (Bytes::from("a"), Bytes::from("1.1")),
@@ -222,13 +222,13 @@ fn test_task2_merge_empty() {
             (Bytes::from("b"), Bytes::from("2.1")),
             (Bytes::from("c"), Bytes::from("3.1")),
         ],
-    );
+    ).await;
 }
 
-#[test]
-fn test_task2_merge_error() {
+#[tokio::test]
+async fn test_task2_merge_error() {
     let mut iter = MergeIterator::<MockIterator>::create(vec![]);
-    check_iter_result_by_key(&mut iter, vec![]);
+    check_iter_result_by_key(&mut iter, vec![]).await;
 
     let i1 = MockIterator::new(vec![
         (Bytes::from("a"), Bytes::from("1.1")),
@@ -249,11 +249,11 @@ fn test_task2_merge_error() {
         Box::new(i2),
     ]);
     // your implementation should correctly throw an error instead of panic
-    expect_iter_error(iter);
+    expect_iter_error(iter).await;
 }
 
-#[test]
-fn test_task3_fused_iterator() {
+#[tokio::test]
+async fn test_task3_fused_iterator() {
     let iter = MockIterator::new(vec![]);
     let mut fused_iter = FusedIterator::new(iter);
     assert!(!fused_iter.is_valid());
@@ -277,29 +277,29 @@ fn test_task3_fused_iterator() {
     assert!(fused_iter.next().is_err());
 }
 
-#[test]
-fn test_task4_integration() {
+#[tokio::test]
+async fn test_task4_integration() {
     let dir = tempdir().unwrap();
     let storage = Arc::new(
-        LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap(),
+        LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).await.unwrap(),
     );
-    storage.put(b"1", b"233").unwrap();
-    storage.put(b"2", b"2333").unwrap();
-    storage.put(b"3", b"23333").unwrap();
+    storage.put(b"1", b"233").await.unwrap();
+    storage.put(b"2", b"2333").await.unwrap();
+    storage.put(b"3", b"23333").await.unwrap();
     storage
-        .force_freeze_memtable(&storage.state_lock.lock())
+        .force_freeze_memtable().await
         .unwrap();
-    storage.delete(b"1").unwrap();
-    storage.delete(b"2").unwrap();
-    storage.put(b"3", b"2333").unwrap();
-    storage.put(b"4", b"23333").unwrap();
+    storage.delete(b"1").await.unwrap();
+    storage.delete(b"2").await.unwrap();
+    storage.put(b"3", b"2333").await.unwrap();
+    storage.put(b"4", b"23333").await.unwrap();
     storage
-        .force_freeze_memtable(&storage.state_lock.lock())
+        .force_freeze_memtable().await
         .unwrap();
-    storage.put(b"1", b"233333").unwrap();
-    storage.put(b"3", b"233333").unwrap();
+    storage.put(b"1", b"233333").await.unwrap();
+    storage.put(b"3", b"233333").await.unwrap();
     {
-        let mut iter = storage.scan(Bound::Unbounded, Bound::Unbounded).unwrap();
+        let mut iter = storage.scan(Bound::Unbounded, Bound::Unbounded).await.unwrap();
         check_lsm_iter_result_by_key(
             &mut iter,
             vec![
@@ -307,7 +307,7 @@ fn test_task4_integration() {
                 (Bytes::from_static(b"3"), Bytes::from_static(b"233333")),
                 (Bytes::from_static(b"4"), Bytes::from_static(b"23333")),
             ],
-        );
+        ).await;
         assert!(!iter.is_valid());
         iter.next().unwrap();
         iter.next().unwrap();
@@ -317,11 +317,12 @@ fn test_task4_integration() {
     {
         let mut iter = storage
             .scan(Bound::Included(b"2"), Bound::Included(b"3"))
+            .await
             .unwrap();
         check_lsm_iter_result_by_key(
             &mut iter,
             vec![(Bytes::from_static(b"3"), Bytes::from_static(b"233333"))],
-        );
+        ).await;
         assert!(!iter.is_valid());
         iter.next().unwrap();
         iter.next().unwrap();

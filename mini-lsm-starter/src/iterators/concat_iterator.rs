@@ -45,7 +45,7 @@ impl SstConcatIterator {
         }
     }
 
-    pub fn create_and_seek_to_first(sstables: Vec<Arc<SsTable>>) -> Result<Self> {
+    pub async fn create_and_seek_to_first(sstables: Vec<Arc<SsTable>>) -> Result<Self> {
         SstConcatIterator::check_sst_valid(&sstables);
 
         if sstables.is_empty() {
@@ -58,7 +58,7 @@ impl SstConcatIterator {
         let mut iter = Self {
             current: Some(SsTableIterator::create_and_seek_to_first(
                 sstables[0].clone(),
-            )?),
+            ).await?),
             next_sst_idx: 1,
             sstables,
         };
@@ -70,7 +70,7 @@ impl SstConcatIterator {
         Ok(iter)
     }
 
-    pub fn create_and_seek_to_key(sstables: Vec<Arc<SsTable>>, key: KeySlice) -> Result<Self> {
+    pub async fn create_and_seek_to_key(sstables: Vec<Arc<SsTable>>, key: KeySlice<'_>) -> Result<Self> {
         SstConcatIterator::check_sst_valid(&sstables);
 
         if sstables.is_empty() {
@@ -97,7 +97,7 @@ impl SstConcatIterator {
             current: Some(SsTableIterator::create_and_seek_to_key(
                 sstables[idx].clone(),
                 key,
-            )?),
+            ).await?),
             next_sst_idx: idx + 1,
             sstables,
         };
@@ -132,9 +132,10 @@ impl StorageIterator for SstConcatIterator {
         self.current.as_mut().unwrap().next()?;
         while !self.is_valid() {
             if self.next_sst_idx < self.sstables.len() {
-                self.current = Some(SsTableIterator::create_and_seek_to_first(
-                    self.sstables[self.next_sst_idx].clone(),
-                )?);
+                // Note: This is still async internally but we call it from sync next()
+                // The SsTableIterator will handle block loading
+                let table = self.sstables[self.next_sst_idx].clone();
+                self.current = Some(SsTableIterator::create_and_seek_to_first_sync(table)?);
                 self.next_sst_idx += 1;
             } else {
                 self.current = None;

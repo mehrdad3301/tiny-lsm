@@ -21,8 +21,8 @@ use crate::{
 
 use super::harness::{check_compaction_ratio, compaction_bench};
 
-#[test]
-fn test_integration() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_integration() {
     let dir = tempdir().unwrap();
     let storage = MiniLsm::open(
         &dir,
@@ -35,8 +35,9 @@ fn test_integration() {
             },
         )),
     )
+    .await
     .unwrap();
 
-    compaction_bench(storage.clone());
-    check_compaction_ratio(storage.clone());
+    compaction_bench(storage.clone()).await;
+    check_compaction_ratio(storage.clone()).await;
 }

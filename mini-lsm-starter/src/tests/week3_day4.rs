@@ -23,8 +23,8 @@ use crate::{
 
 use super::harness::{check_iter_result_by_key, construct_merge_iterator_over_storage};
 
-#[test]
-fn test_task1_watermark() {
+#[tokio::test]
+async fn test_task1_watermark() {
     let mut watermark = Watermark::new();
     watermark.add_reader(0);
     for i in 1..=1000 {
@@ -61,14 +61,14 @@ fn test_task1_watermark() {
     assert_eq!(watermark.watermark(), Some(2001));
 }
 
-#[test]
-fn test_task2_snapshot_watermark() {
+#[tokio::test]
+async fn test_task2_snapshot_watermark() {
     let dir = tempdir().unwrap();
     let options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
-    let storage = MiniLsm::open(&dir, options.clone()).unwrap();
+    let storage = MiniLsm::open(&dir, options.clone()).await.unwrap();
     let txn1 = storage.new_txn().unwrap();
     let txn2 = storage.new_txn().unwrap();
-    storage.put(b"233", b"23333").unwrap();
+    storage.put(b"233", b"23333").await.unwrap();
     let txn3 = storage.new_txn().unwrap();
     assert_eq!(storage.inner.mvcc().watermark(), txn1.read_ts);
     drop(txn1);
@@ -82,17 +82,18 @@ fn test_task2_snapshot_watermark() {
     );
 }
 
-#[test]
-fn test_task3_mvcc_compaction() {
+#[tokio::test]
+async fn test_task3_mvcc_compaction() {
     let dir = tempdir().unwrap();
     let options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
-    let storage = MiniLsm::open(&dir, options.clone()).unwrap();
+    let storage = MiniLsm::open(&dir, options.clone()).await.unwrap();
     let snapshot0 = storage.new_txn().unwrap();
     storage
         .write_batch(&[
             WriteBatchRecord::Put(b"a", b"1"),
             WriteBatchRecord::Put(b"b", b"1"),
         ])
+        .await
         .unwrap();
     let snapshot1 = storage.new_txn().unwrap();
     storage
@@ -100,6 +101,7 @@ fn test_task3_mvcc_compaction() {
             WriteBatchRecord::Put(b"a", b"2"),
             WriteBatchRecord::Put(b"d", b"2"),
         ])
+        .await
         .unwrap();
     let snapshot2 = storage.new_txn().unwrap();
     storage
@@ -107,6 +109,7 @@ fn test_task3_mvcc_compaction() {
             WriteBatchRecord::Put(b"a", b"3"),
             WriteBatchRecord::Del(b"d"),
         ])
+        .await
         .unwrap();
     let snapshot3 = storage.new_txn().unwrap();
     storage
@@ -114,12 +117,13 @@ fn test_task3_mvcc_compaction() {
             WriteBatchRecord::Put(b"c", b"4"),
             WriteBatchRecord::Del(b"a"),
         ])
+        .await
         .unwrap();
 
-    storage.force_flush().unwrap();
-    storage.force_full_compaction().unwrap();
+    storage.force_flush().await.unwrap();
+    storage.force_full_compaction().await.unwrap();
 
-    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read());
+    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read()).await;
     check_iter_result_by_key(
         &mut iter,
         vec![
@@ -132,12 +136,13 @@ fn test_task3_mvcc_compaction() {
             (Bytes::from("d"), Bytes::new()),
             (Bytes::from("d"), Bytes::from("2")),
         ],
-    );
+    )
+    .await;
 
     drop(snapshot0);
-    storage.force_full_compaction().unwrap();
+    storage.force_full_compaction().await.unwrap();
 
-    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read());
+    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read()).await;
     check_iter_result_by_key(
         &mut iter,
         vec![
@@ -150,12 +155,13 @@ fn test_task3_mvcc_compaction() {
             (Bytes::from("d"), Bytes::new()),
             (Bytes::from("d"), Bytes::from("2")),
         ],
-    );
+    )
+    .await;
 
     drop(snapshot1);
-    storage.force_full_compaction().unwrap();
+    storage.force_full_compaction().await.unwrap();
 
-    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read());
+    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read()).await;
     check_iter_result_by_key(
         &mut iter,
         vec![
@@ -167,12 +173,13 @@ fn test_task3_mvcc_compaction() {
             (Bytes::from("d"), Bytes::new()),
             (Bytes::from("d"), Bytes::from("2")),
         ],
-    );
+    )
+    .await;
 
     drop(snapshot2);
-    storage.force_full_compaction().unwrap();
+    storage.force_full_compaction().await.unwrap();
 
-    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read());
+    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read()).await;
     check_iter_result_by_key(
         &mut iter,
         vec![
@@ -181,17 +188,19 @@ fn test_task3_mvcc_compaction() {
             (Bytes::from("b"), Bytes::from("1")),
             (Bytes::from("c"), Bytes::from("4")),
         ],
-    );
+    )
+    .await;
 
     drop(snapshot3);
-    storage.force_full_compaction().unwrap();
+    storage.force_full_compaction().await.unwrap();
 
-    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read());
+    let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read()).await;
     check_iter_result_by_key(
         &mut iter,
         vec![
             (Bytes::from("b"), Bytes::from("1")),
             (Bytes::from("c"), Bytes::from("4")),
         ],
-    );
+    )
+    .await;
 }

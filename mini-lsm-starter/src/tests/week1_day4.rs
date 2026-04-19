@@ -21,16 +21,16 @@ use crate::iterators::StorageIterator;
 use crate::key::{KeySlice, KeyVec};
 use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
 
-#[test]
-fn test_sst_build_single_key() {
+#[tokio::test]
+async fn test_sst_build_single_key() {
     let mut builder = SsTableBuilder::new(16);
     builder.add(KeySlice::for_testing_from_slice_no_ts(b"233"), b"233333");
     let dir = tempdir().unwrap();
-    builder.build_for_test(dir.path().join("1.sst")).unwrap();
+    builder.build_for_test(dir.path().join("1.sst")).await.unwrap();
 }
 
-#[test]
-fn test_sst_build_two_blocks() {
+#[tokio::test]
+async fn test_sst_build_two_blocks() {
     let mut builder = SsTableBuilder::new(16);
     builder.add(KeySlice::for_testing_from_slice_no_ts(b"11"), b"11");
     builder.add(KeySlice::for_testing_from_slice_no_ts(b"22"), b"22");
@@ -40,7 +40,7 @@ fn test_sst_build_two_blocks() {
     builder.add(KeySlice::for_testing_from_slice_no_ts(b"66"), b"22");
     assert!(builder.meta.len() >= 2);
     let dir = tempdir().unwrap();
-    builder.build_for_test(dir.path().join("1.sst")).unwrap();
+    builder.build_for_test(dir.path().join("1.sst")).await.unwrap();
 }
 
 fn key_of(idx: usize) -> KeyVec {
@@ -55,7 +55,7 @@ fn num_of_keys() -> usize {
     100
 }
 
-fn generate_sst() -> (TempDir, SsTable) {
+async fn generate_sst() -> (TempDir, SsTable) {
     let mut builder = SsTableBuilder::new(128);
     for idx in 0..num_of_keys() {
         let key = key_of(idx);
@@ -64,12 +64,12 @@ fn generate_sst() -> (TempDir, SsTable) {
     }
     let dir = tempdir().unwrap();
     let path = dir.path().join("1.sst");
-    (dir, builder.build_for_test(path).unwrap())
+    (dir, builder.build_for_test(path).await.unwrap())
 }
 
-#[test]
-fn test_sst_build_all() {
-    let (_, sst) = generate_sst();
+#[tokio::test]
+async fn test_sst_build_all() {
+    let (_, sst) = generate_sst().await;
     assert_eq!(sst.first_key().as_key_slice(), key_of(0).as_key_slice());
     assert_eq!(
         sst.last_key().as_key_slice(),
@@ -77,11 +77,11 @@ fn test_sst_build_all() {
     )
 }
 
-#[test]
-fn test_sst_decode() {
-    let (_dir, sst) = generate_sst();
+#[tokio::test]
+async fn test_sst_decode() {
+    let (_dir, sst) = generate_sst().await;
     let meta = sst.block_meta.clone();
-    let new_sst = SsTable::open_for_test(sst.file).unwrap();
+    let new_sst = SsTable::open_for_test(sst.file).await.unwrap();
     assert_eq!(new_sst.block_meta, meta);
     assert_eq!(
         new_sst.first_key().for_testing_key_ref(),
@@ -97,11 +97,11 @@ fn as_bytes(x: &[u8]) -> Bytes {
     Bytes::copy_from_slice(x)
 }
 
-#[test]
-fn test_sst_iterator() {
-    let (_dir, sst) = generate_sst();
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_sst_iterator() {
+    let (_dir, sst) = generate_sst().await;
     let sst = Arc::new(sst);
-    let mut iter = SsTableIterator::create_and_seek_to_first(sst).unwrap();
+    let mut iter = SsTableIterator::create_and_seek_to_first(sst).await.unwrap();
     for _ in 0..5 {
         for i in 0..num_of_keys() {
             let key = iter.key();
@@ -122,15 +122,15 @@ fn test_sst_iterator() {
             );
             iter.next().unwrap();
         }
-        iter.seek_to_first().unwrap();
+        iter.seek_to_first().await.unwrap();
     }
 }
 
-#[test]
-fn test_sst_seek_key() {
-    let (_dir, sst) = generate_sst();
+#[tokio::test]
+async fn test_sst_seek_key() {
+    let (_dir, sst) = generate_sst().await;
     let sst = Arc::new(sst);
-    let mut iter = SsTableIterator::create_and_seek_to_key(sst, key_of(0).as_key_slice()).unwrap();
+    let mut iter = SsTableIterator::create_and_seek_to_key(sst, key_of(0).as_key_slice()).await.unwrap();
     for offset in 1..=5 {
         for i in 0..num_of_keys() {
             let key = iter.key();
@@ -152,9 +152,9 @@ fn test_sst_seek_key() {
             iter.seek_to_key(KeySlice::for_testing_from_slice_no_ts(
                 &format!("key_{:03}", i * 5 + offset).into_bytes(),
             ))
-            .unwrap();
+            .await.unwrap();
         }
         iter.seek_to_key(KeySlice::for_testing_from_slice_no_ts(b"k"))
-            .unwrap();
+            .await.unwrap();
     }
 }

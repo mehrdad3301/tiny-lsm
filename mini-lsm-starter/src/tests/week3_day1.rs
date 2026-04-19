@@ -22,8 +22,8 @@ use crate::table::{FileObject, SsTable, SsTableBuilder, SsTableIterator};
 
 use super::harness::{check_iter_result_by_key_and_ts, generate_sst_with_ts};
 
-#[test]
-fn test_sst_build_multi_version_simple() {
+#[tokio::test]
+async fn test_sst_build_multi_version_simple() {
     let mut builder = SsTableBuilder::new(16);
     builder.add(
         KeySlice::for_testing_from_slice_with_ts(b"233", 233),
@@ -34,7 +34,7 @@ fn test_sst_build_multi_version_simple() {
         b"2333333",
     );
     let dir = tempdir().unwrap();
-    builder.build_for_test(dir.path().join("1.sst")).unwrap();
+    builder.build_for_test(dir.path().join("1.sst")).await.unwrap();
 }
 
 fn generate_test_data() -> Vec<((Bytes, u64), Bytes)> {
@@ -48,21 +48,23 @@ fn generate_test_data() -> Vec<((Bytes, u64), Bytes)> {
         .collect()
 }
 
-#[test]
-fn test_sst_build_multi_version_hard() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_sst_build_multi_version_hard() {
     let dir = tempdir().unwrap();
     let data = generate_test_data();
-    generate_sst_with_ts(1, dir.path().join("1.sst"), data.clone(), None);
+    generate_sst_with_ts(1, dir.path().join("1.sst"), data.clone(), None).await;
     let sst = Arc::new(
         SsTable::open(
             1,
             None,
-            FileObject::open(&dir.path().join("1.sst")).unwrap(),
+            FileObject::open(&dir.path().join("1.sst")).await.unwrap(),
         )
+        .await
         .unwrap(),
     );
     check_iter_result_by_key_and_ts(
-        &mut SsTableIterator::create_and_seek_to_first(sst).unwrap(),
+        &mut SsTableIterator::create_and_seek_to_first(sst).await.unwrap(),
         data,
-    );
+    )
+    .await;
 }

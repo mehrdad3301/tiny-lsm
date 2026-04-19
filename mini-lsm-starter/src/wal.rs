@@ -18,34 +18,39 @@
 use anyhow::{Result, bail};
 use bytes::{Buf, BufMut, Bytes};
 use crossbeam_skiplist::SkipMap;
-use parking_lot::Mutex;
-use std::fs::{File, OpenOptions};
-use std::hash::Hasher;
-use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
+use tokio::sync::Mutex;
 
 use crate::key::{KeyBytes, KeySlice};
 
 pub struct Wal {
-    /// ??? why put file behind a mutex
-    file: Arc<Mutex<BufWriter<File>>>,
+    file: Arc<Mutex<BufWriter<tokio::fs::File>>>,
 }
 
 impl Wal {
-    pub fn create(path: impl AsRef<Path>) -> Result<Self> {
-        let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    pub async fn create(path: impl AsRef<Path>) -> Result<Self> {
+        let file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .await?;
         let writer = BufWriter::new(file);
         Ok(Self {
             file: Arc::new(Mutex::new(writer)),
         })
     }
 
-    pub fn recover(path: impl AsRef<Path>, skiplist: &SkipMap<KeyBytes, Bytes>) -> Result<Self> {
+    pub async fn recover(path: impl AsRef<Path>, skiplist: &SkipMap<KeyBytes, Bytes>) -> Result<Self> {
         let path = path.as_ref();
-        let mut file = OpenOptions::new().read(true).append(true).open(path)?;
+        let mut file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .append(true)
+            .open(path)
+            .await?;
         let mut buf = Vec::new();
-        file.read_to_end(&mut buf)?;
+        file.read_to_end(&mut buf).await?;
         let mut buf: &[u8] = buf.as_slice();
         while buf.has_remaining() {
             let batch_size = buf.get_u32() as usize;
@@ -83,13 +88,12 @@ impl Wal {
         })
     }
 
-    pub fn put(&self, key: KeySlice, value: &[u8]) -> Result<()> {
-        self.put_batch(&[(key, value)])
+    pub async fn put(&self, key: KeySlice<'_>, value: &[u8]) -> Result<()> {
+        self.put_batch(&[(key, value)]).await
     }
 
-    /// Implement this in week 3, day 5; if you want to implement this earlier, use `&[u8]` as the key type.
-    pub fn put_batch(&self, data: &[(KeySlice, &[u8])]) -> Result<()> {
-        let mut file = self.file.lock();
+    pub async fn put_batch(&self, data: &[(KeySlice<'_>, &[u8])]) -> Result<()> {
+        let mut file = self.file.lock().await;
         let mut buf = Vec::<u8>::new();
         for (key, value) in data {
             buf.put_u16(key.key_len() as u16);
@@ -98,19 +102,16 @@ impl Wal {
             buf.put_u16(value.len() as u16);
             buf.put_slice(value);
         }
-        // write batch_size header (u32)
-        file.write_all(&(buf.len() as u32).to_be_bytes())?;
-        // write key-value pairs body
-        file.write_all(&buf)?;
-        // write checksum (u32)
-        file.write_all(&crc32fast::hash(&buf).to_be_bytes())?;
+        file.write_all(&(buf.len() as u32).to_be_bytes()).await?;
+        file.write_all(&buf).await?;
+        file.write_all(&crc32fast::hash(&buf).to_be_bytes()).await?;
         Ok(())
     }
 
-    pub fn sync(&self) -> Result<()> {
-        let mut file = self.file.lock();
-        file.flush()?;
-        file.get_mut().sync_all()?;
+    pub async fn sync(&self) -> Result<()> {
+        let mut file = self.file.lock().await;
+        file.flush().await?;
+        file.get_mut().sync_all().await?;
         Ok(())
     }
 }

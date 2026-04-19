@@ -22,6 +22,7 @@ use std::{
 };
 
 use anyhow::Result;
+use async_trait::async_trait;
 use bytes::Bytes;
 use crossbeam_skiplist::{SkipMap, map::Entry};
 use nom::AsBytes;
@@ -45,14 +46,14 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+    pub async fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         if self.committed.load(Ordering::SeqCst) {
             panic!("attempted to modify a commited transaction !");
         }
 
-        if let Some(key_hashes) = &self.key_hashes { 
+        if let Some(key_hashes) = &self.key_hashes {
             key_hashes
-                .lock().1.insert(farmhash::hash32(key)) ; 
+                .lock().1.insert(farmhash::hash32(key)) ;
         }
 
         if let Some(entry) = self.local_storage.get(key) {
@@ -61,10 +62,10 @@ impl Transaction {
             }
             return Ok(Some(entry.value().clone()));
         }
-        self.inner.get_with_ts(key, self.read_ts)
+        self.inner.get_with_ts(key, self.read_ts).await
     }
 
-    pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
+    pub async fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
         if self.committed.load(Ordering::SeqCst) {
             panic!("attempted to modify a commited transaction !");
         }
@@ -79,8 +80,8 @@ impl Transaction {
 
         TxnIterator::create(
             self.clone(),
-            TwoMergeIterator::create(iter, self.inner.scan_with_ts(lower, upper, self.read_ts)?)?,
-        )
+            TwoMergeIterator::create(iter, self.inner.scan_with_ts(lower, upper, self.read_ts).await?)?,
+        ).await
     }
 
     pub fn put(&self, key: &[u8], value: &[u8]) {
@@ -91,9 +92,9 @@ impl Transaction {
         self.local_storage
             .insert(Bytes::copy_from_slice(key), Bytes::copy_from_slice(value));
 
-        if let Some(key_hashes) = &self.key_hashes { 
+        if let Some(key_hashes) = &self.key_hashes {
             key_hashes
-                .lock().0.insert(farmhash::hash32(key)) ; 
+                .lock().0.insert(farmhash::hash32(key)) ;
         }
     }
 
@@ -101,39 +102,39 @@ impl Transaction {
         self.put(key, b"")
     }
 
-    pub fn commit(&self) -> Result<()> {
+    pub async fn commit(&self) -> Result<()> {
         self.committed
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .expect("cannot operate on committed txn!");
 
-        // take the commit lock 
-        let _lock = self.inner.mvcc().commit_lock.lock();  
+        // take the commit lock
+        let _lock = self.inner.mvcc().commit_lock.lock().await;
 
-        let commit_ts = self.inner.mvcc().latest_commit_ts() + 1 ; 
+        let commit_ts = self.inner.mvcc().latest_commit_ts() + 1 ;
 
-        // check serializability  
-        if self.inner.options.serializable { 
+        // check serializability
+        if self.inner.options.serializable {
             if let Some(key_hashes) = &self.key_hashes {
-                let (write_set, read_set) = &*key_hashes.lock() ; 
-                let commited_txn = self.inner.mvcc().committed_txns.lock() ; 
-                if write_set.is_empty() { 
-                    return Ok(()) ; 
+                let (write_set, read_set) = &*key_hashes.lock() ;
+                let commited_txn = self.inner.mvcc().committed_txns.lock().await ;
+                if write_set.is_empty() {
+                    return Ok(()) ;
                 }
 
                 for (_, write_set) in commited_txn.range(
-                    (Bound::Excluded(self.read_ts), Bound::Excluded(commit_ts))) { 
-                    for keys in write_set.key_hashes.iter() { 
-                        if read_set.contains(keys) { 
+                    (Bound::Excluded(self.read_ts), Bound::Excluded(commit_ts))) {
+                    for keys in write_set.key_hashes.iter() {
+                        if read_set.contains(keys) {
                             return Err(anyhow::anyhow!("serialization failure due to concurrent write-write conflict!"))
                         }
                     }
                 }
-            } else { 
+            } else {
                 panic!("serializability check is enabled but key_hashes is not initialized!") ;
             }
         }
 
-        // write commit batch 
+        // write commit batch
         let batch = self
             .local_storage
             .iter()
@@ -146,26 +147,26 @@ impl Transaction {
             })
             .collect::<Vec<_>>();
 
-        self.inner.write_batch_inner(&batch)?;
+        self.inner.write_batch_inner(&batch).await?;
 
         if self.inner.options.serializable {
 
-            // add transaction data to mvcc 
-            let mut commited_txn = self.inner.mvcc().committed_txns.lock() ; 
-            commited_txn.insert(commit_ts, 
-                CommittedTxnData { 
-                    key_hashes: std::mem::take(&mut self.key_hashes.as_ref().unwrap().lock().0), 
-                    read_ts: self.read_ts, 
-                    commit_ts 
+            // add transaction data to mvcc
+            let mut commited_txn = self.inner.mvcc().committed_txns.lock().await ;
+            commited_txn.insert(commit_ts,
+                CommittedTxnData {
+                    key_hashes: std::mem::take(&mut self.key_hashes.as_ref().unwrap().lock().0),
+                    read_ts: self.read_ts,
+                    commit_ts
                 }
-            ); 
+            );
 
             // garbage collect committed transactions
-            let watermark = self.inner.mvcc().watermark() ; 
+            let watermark = self.inner.mvcc().watermark() ;
             while let Some(entry) = commited_txn.first_entry() {
                 if entry.get().commit_ts <= watermark {
                     entry.remove() ;
-                } else {                    
+                } else {
                     break ;
                 }
             }
@@ -205,6 +206,7 @@ impl TxnLocalIterator {
     }
 }
 
+#[async_trait]
 impl StorageIterator for TxnLocalIterator {
     type KeyType<'a> = &'a [u8];
 
@@ -233,7 +235,7 @@ pub struct TxnIterator {
 }
 
 impl TxnIterator {
-    pub fn create(
+    pub async fn create(
         txn: Arc<Transaction>,
         iter: TwoMergeIterator<TxnLocalIterator, FusedIterator<LsmIterator>>,
     ) -> Result<Self> {
@@ -248,17 +250,18 @@ impl TxnIterator {
             self.iter.next()?;
         }
         Ok(())
-    } 
+    }
 
-    fn add_to_read_set(&self) { 
-        if self.is_valid() { 
-            if let Some(key_hashes) = &self.txn.key_hashes { 
-                key_hashes.lock().1.insert(farmhash::hash32(self.key())) ; 
+    fn add_to_read_set(&self) {
+        if self.is_valid() {
+            if let Some(key_hashes) = &self.txn.key_hashes {
+                key_hashes.lock().1.insert(farmhash::hash32(self.key())) ;
             }
         }
     }
 }
 
+#[async_trait]
 impl StorageIterator for TxnIterator {
     type KeyType<'a>
         = &'a [u8]

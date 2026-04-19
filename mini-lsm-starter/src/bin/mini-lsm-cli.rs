@@ -56,14 +56,16 @@ struct ReplHandler {
 }
 
 impl ReplHandler {
-    fn handle(&mut self, command: &Command) -> Result<()> {
+    async fn handle(&mut self, command: &Command) -> Result<()> {
         match command {
             Command::Fill { begin, end } => {
                 for i in *begin..=*end {
-                    self.lsm.put(
-                        format!("{}", i).as_bytes(),
-                        format!("value{}@{}", i, self.epoch).as_bytes(),
-                    )?;
+                    self.lsm
+                        .put(
+                            format!("{}", i).as_bytes(),
+                            format!("value{}@{}", i, self.epoch).as_bytes(),
+                        )
+                        .await?;
                 }
 
                 println!(
@@ -73,11 +75,11 @@ impl ReplHandler {
                 );
             }
             Command::Del { key } => {
-                self.lsm.delete(key.as_bytes())?;
+                self.lsm.delete(key.as_bytes()).await?;
                 println!("{} deleted", key);
             }
             Command::Get { key } => {
-                if let Some(value) = self.lsm.get(key.as_bytes())? {
+                if let Some(value) = self.lsm.get(key.as_bytes()).await? {
                     println!("{}={:?}", key, value);
                 } else {
                     println!("{} not exist", key);
@@ -87,7 +89,8 @@ impl ReplHandler {
                 (None, None) => {
                     let mut iter = self
                         .lsm
-                        .scan(std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)?;
+                        .scan(std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
+                        .await?;
                     let mut cnt = 0;
                     while iter.is_valid() {
                         println!(
@@ -102,10 +105,13 @@ impl ReplHandler {
                     println!("{} keys scanned", cnt);
                 }
                 (Some(begin), Some(end)) => {
-                    let mut iter = self.lsm.scan(
-                        std::ops::Bound::Included(begin.as_bytes()),
-                        std::ops::Bound::Included(end.as_bytes()),
-                    )?;
+                    let mut iter = self
+                        .lsm
+                        .scan(
+                            std::ops::Bound::Included(begin.as_bytes()),
+                            std::ops::Bound::Included(end.as_bytes()),
+                        )
+                        .await?;
                     let mut cnt = 0;
                     while iter.is_valid() {
                         println!(
@@ -128,15 +134,15 @@ impl ReplHandler {
                 println!("dump success");
             }
             Command::Flush => {
-                self.lsm.force_flush()?;
+                self.lsm.force_flush().await?;
                 println!("flush success");
             }
             Command::FullCompaction => {
-                self.lsm.force_full_compaction()?;
+                self.lsm.force_full_compaction().await?;
                 println!("full compaction success");
             }
             Command::Quit | Command::Close => {
-                self.lsm.close()?;
+                self.lsm.close().await?;
                 std::process::exit(0);
             }
         };
@@ -173,10 +179,9 @@ enum Command {
 
 impl Command {
     pub fn parse(input: &str) -> Result<Self> {
+        use nom::branch::*;
         use nom::bytes::complete::*;
         use nom::character::complete::*;
-
-        use nom::branch::*;
         use nom::combinator::*;
         use nom::sequence::*;
 
@@ -262,7 +267,7 @@ struct Repl {
 }
 
 impl Repl {
-    pub fn run(mut self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
         self.bootstrap()?;
 
         loop {
@@ -272,7 +277,7 @@ impl Repl {
                 continue;
             }
             let command = Command::parse(&readline)?;
-            self.handler.handle(&command)?;
+            self.handler.handle(&command).await?;
             self.editor.add_history_entry(readline)?;
         }
     }
@@ -326,7 +331,8 @@ impl ReplBuilder {
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let args = Args::parse();
     let lsm = MiniLsm::open(
         args.path,
@@ -362,7 +368,8 @@ fn main() -> Result<()> {
             enable_wal: args.enable_wal,
             serializable: args.serializable,
         },
-    )?;
+    )
+    .await?;
 
     let repl = ReplBuilder::new()
         .app_name("mini-lsm-cli")
@@ -370,6 +377,6 @@ fn main() -> Result<()> {
         .prompt("mini-lsm-cli> ")
         .build(ReplHandler { epoch: 0, lsm })?;
 
-    repl.run()?;
+    repl.run().await?;
     Ok(())
 }

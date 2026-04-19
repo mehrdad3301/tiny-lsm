@@ -26,18 +26,19 @@ use crate::{
     tests::harness::dump_files_in_dir,
 };
 
-#[test]
-fn test_integration_leveled() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_integration_leveled() {
     test_integration(CompactionOptions::Leveled(LeveledCompactionOptions {
         level_size_multiplier: 2,
         level0_file_num_compaction_trigger: 2,
         max_levels: 3,
         base_level_size_mb: 1,
     }))
+    .await;
 }
 
-#[test]
-fn test_integration_tiered() {
+#[tokio::test]
+async fn test_integration_tiered() {
     test_integration(CompactionOptions::Tiered(TieredCompactionOptions {
         num_tiers: 3,
         max_size_amplification_percent: 200,
@@ -45,15 +46,17 @@ fn test_integration_tiered() {
         min_merge_width: 3,
         max_merge_width: None,
     }))
+    .await;
 }
 
-#[test]
-fn test_integration_simple() {
+#[tokio::test]
+async fn test_integration_simple() {
     test_integration(CompactionOptions::Simple(SimpleLeveledCompactionOptions {
         size_ratio_percent: 200,
         level0_file_num_compaction_trigger: 2,
         max_levels: 3,
-    }));
+    }))
+    .await;
 }
 
 /// Provision the storage such that base_level contains 2 SST files (target size is 2MB and each SST is 1MB).
@@ -61,8 +64,8 @@ fn test_integration_simple() {
 /// and leveled compaction should handle this situation correctly: These files might not be sorted by first-key and
 /// should NOT be sorted inside the `apply_compaction_result` function, because we don't have any actual SST loaded at the
 /// point where this function is called during manifest recovery.
-#[test]
-fn test_multiple_compacted_ssts_leveled() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_multiple_compacted_ssts_leveled() {
     let compaction_options = CompactionOptions::Leveled(LeveledCompactionOptions {
         level_size_multiplier: 4,
         level0_file_num_compaction_trigger: 2,
@@ -73,18 +76,18 @@ fn test_multiple_compacted_ssts_leveled() {
     let lsm_storage_options = LsmStorageOptions::default_for_week2_test(compaction_options.clone());
 
     let dir = tempdir().unwrap();
-    let storage = MiniLsm::open(&dir, lsm_storage_options).unwrap();
+    let storage = MiniLsm::open(&dir, lsm_storage_options).await.unwrap();
 
     // Insert approximately 10MB of data to ensure that at least one compaction is triggered by priority.
     // Insert 500 key-value pairs where each pair is 2KB
     for i in 0..500 {
         let (key, val) = key_value_pair_with_target_size(i, 20 * 1024);
-        storage.put(&key, &val).unwrap();
+        storage.put(&key, &val).await.unwrap();
     }
 
     let mut prev_snapshot = storage.inner.state.read().clone();
     while {
-        std::thread::sleep(Duration::from_secs(1));
+        tokio::time::sleep(Duration::from_secs(1)).await;
         let snapshot = storage.inner.state.read().clone();
         let to_cont = prev_snapshot.levels != snapshot.levels
             || prev_snapshot.l0_sstables != snapshot.l0_sstables;
@@ -94,7 +97,7 @@ fn test_multiple_compacted_ssts_leveled() {
         println!("waiting for compaction to converge");
     }
 
-    storage.close().unwrap();
+    storage.close().await.unwrap();
     assert!(storage.inner.state.read().memtable.is_empty());
     assert!(storage.inner.state.read().imm_memtables.is_empty());
 
@@ -106,39 +109,42 @@ fn test_multiple_compacted_ssts_leveled() {
         &dir,
         LsmStorageOptions::default_for_week2_test(compaction_options.clone()),
     )
+    .await
     .unwrap();
 
     for i in 0..500 {
         let (key, val) = key_value_pair_with_target_size(i, 20 * 1024);
-        assert_eq!(&storage.get(&key).unwrap().unwrap()[..], &val);
+        assert_eq!(&storage.get(&key).await.unwrap().unwrap()[..], &val);
     }
 }
 
-fn test_integration(compaction_options: CompactionOptions) {
+async fn test_integration(compaction_options: CompactionOptions) {
     let dir = tempdir().unwrap();
     let storage = MiniLsm::open(
         &dir,
         LsmStorageOptions::default_for_week2_test(compaction_options.clone()),
     )
+    .await
     .unwrap();
     for i in 0..=20 {
-        storage.put(b"0", format!("v{}", i).as_bytes()).unwrap();
+        storage.put(b"0", format!("v{}", i).as_bytes()).await.unwrap();
         if i % 2 == 0 {
-            storage.put(b"1", format!("v{}", i).as_bytes()).unwrap();
+            storage.put(b"1", format!("v{}", i).as_bytes()).await.unwrap();
         } else {
-            storage.delete(b"1").unwrap();
+            storage.delete(b"1").await.unwrap();
         }
         if i % 2 == 1 {
-            storage.put(b"2", format!("v{}", i).as_bytes()).unwrap();
+            storage.put(b"2", format!("v{}", i).as_bytes()).await.unwrap();
         } else {
-            storage.delete(b"2").unwrap();
+            storage.delete(b"2").await.unwrap();
         }
         storage
             .inner
-            .force_freeze_memtable(&storage.inner.state_lock.lock())
+            .force_freeze_memtable()
+            .await
             .unwrap();
     }
-    storage.close().unwrap();
+    storage.close().await.unwrap();
     // ensure all SSTs are flushed
     assert!(storage.inner.state.read().memtable.is_empty());
     assert!(storage.inner.state.read().imm_memtables.is_empty());
@@ -150,10 +156,11 @@ fn test_integration(compaction_options: CompactionOptions) {
         &dir,
         LsmStorageOptions::default_for_week2_test(compaction_options.clone()),
     )
+    .await
     .unwrap();
-    assert_eq!(&storage.get(b"0").unwrap().unwrap()[..], b"v20".as_slice());
-    assert_eq!(&storage.get(b"1").unwrap().unwrap()[..], b"v20".as_slice());
-    assert_eq!(storage.get(b"2").unwrap(), None);
+    assert_eq!(&storage.get(b"0").await.unwrap().unwrap()[..], b"v20".as_slice());
+    assert_eq!(&storage.get(b"1").await.unwrap().unwrap()[..], b"v20".as_slice());
+    assert_eq!(storage.get(b"2").await.unwrap(), None);
 }
 
 /// Create a key value pair where key and value are of target size in bytes

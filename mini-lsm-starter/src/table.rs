@@ -19,7 +19,6 @@ pub(crate) mod bloom;
 mod builder;
 mod iterator;
 
-use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -95,16 +94,15 @@ impl BlockMeta {
 }
 
 /// A file object.
-pub struct FileObject(Option<File>, u64);
+pub struct FileObject(Option<tokio::fs::File>, u64);
 
 impl FileObject {
-    pub fn read(&self, offset: u64, len: u64) -> Result<Vec<u8>> {
-        use std::os::unix::fs::FileExt;
+    pub async fn read(&self, offset: u64, len: u64) -> Result<Vec<u8>> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        let mut file = self.0.as_ref().unwrap().try_clone().await?;
         let mut data = vec![0; len as usize];
-        self.0
-            .as_ref()
-            .unwrap()
-            .read_exact_at(&mut data[..], offset)?;
+        file.seek(std::io::SeekFrom::Start(offset)).await?;
+        file.read_exact(&mut data).await?;
         Ok(data)
     }
 
@@ -113,18 +111,27 @@ impl FileObject {
     }
 
     /// Create a new file object (day 2) and write the file to the disk (day 4).
-    pub fn create(path: &Path, data: Vec<u8>) -> Result<Self> {
-        std::fs::write(path, &data)?;
-        File::open(path)?.sync_all()?;
-        Ok(FileObject(
-            Some(File::options().read(true).write(false).open(path)?),
-            data.len() as u64,
-        ))
+    pub async fn create(path: &Path, data: Vec<u8>) -> Result<Self> {
+        use tokio::io::AsyncWriteExt;
+        let mut file = tokio::fs::File::create(path).await?;
+        file.write_all(&data).await?;
+        file.sync_all().await?;
+        let file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .write(false)
+            .open(path)
+            .await?;
+        let size = file.metadata().await?.len();
+        Ok(FileObject(Some(file), size))
     }
 
-    pub fn open(path: &Path) -> Result<Self> {
-        let file = File::options().read(true).write(false).open(path)?;
-        let size = file.metadata()?.len();
+    pub async fn open(path: &Path) -> Result<Self> {
+        let file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .write(false)
+            .open(path)
+            .await?;
+        let size = file.metadata().await?.len();
         Ok(FileObject(Some(file), size))
     }
 }
@@ -148,97 +155,36 @@ pub struct SsTable {
 
 impl SsTable {
     #[cfg(test)]
-    pub(crate) fn open_for_test(file: FileObject) -> Result<Self> {
-        Self::open(0, None, file)
-    }
-
-    /// Open SSTable from a file using async I/O for parallel recovery.
-    pub async fn open_async(
-        id: usize,
-        block_cache: Option<Arc<BlockCache>>,
-        path: impl AsRef<Path>,
-    ) -> Result<Self> {
-
-        async fn read_at(
-            file: &mut tokio::fs::File,
-            offset: u64,
-            len: usize,
-        ) -> Result<Vec<u8>> {
-            use tokio::io::{AsyncReadExt, AsyncSeekExt};
-            let mut buf = vec![0u8; len];
-            file.seek(std::io::SeekFrom::Start(offset)).await?;
-            file.read_exact(&mut buf).await?;
-            Ok(buf)
-        }
-
-        let mut file = tokio::fs::File::open(path.as_ref()).await?;
-        let size = file.metadata().await?.len();
-
-        let size_u32 = SIZEOF_U32 as u64;
-
-        // Read 1: bloom filter offset (last 4 bytes)
-        let buf_bloom_off = read_at(&mut file, size - size_u32, SIZEOF_U32).await?;
-        let bloom_filter_offset = (&buf_bloom_off[..]).get_u32() as u64;
-
-        // Read 2: bloom filter data
-        let buf_bloom = read_at(
-            &mut file,
-            bloom_filter_offset,
-            (size - bloom_filter_offset - size_u32) as usize,
-        )
-        .await?;
-        let bloom_filter = Bloom::decode(&buf_bloom)?;
-
-        // Read 3: block meta offset (4 bytes before bloom)
-        let buf_meta_off = read_at(&mut file, bloom_filter_offset - size_u32, SIZEOF_U32).await?;
-        let block_meta_offset = (&buf_meta_off[..]).get_u32() as u64;
-
-        // Read 4: raw block meta
-        let buf_meta = read_at(
-            &mut file,
-            block_meta_offset,
-            (bloom_filter_offset - block_meta_offset - size_u32) as usize,
-        )
-        .await?;
-        let (block_meta, max_ts) = BlockMeta::decode_block_meta(&buf_meta)?;
-
-        // Convert tokio file to std file for sync reads later
-        let std_file = file.into_std().await;
-        let file_object = FileObject(Some(std_file), size);
-
-        Ok(Self {
-            file: file_object,
-            first_key: block_meta.first().unwrap().first_key.clone(),
-            last_key: block_meta.last().unwrap().last_key.clone(),
-            block_meta_offset: block_meta_offset as usize,
-            block_cache,
-            id,
-            block_meta,
-            bloom: Some(bloom_filter),
-            max_ts,
-        })
+    pub(crate) async fn open_for_test(file: FileObject) -> Result<Self> {
+        Self::open(0, None, file).await
     }
 
     /// Open SSTable from a file.
-    pub fn open(id: usize, block_cache: Option<Arc<BlockCache>>, file: FileObject) -> Result<Self> {
+    pub async fn open(id: usize, block_cache: Option<Arc<BlockCache>>, file: FileObject) -> Result<Self> {
         let len = file.size();
         let size_u32 = SIZEOF_U32 as u64;
-        let bloom_filter_offset = file.read(len - size_u32, size_u32)?.as_slice().get_u32() as u64;
+        let bloom_filter_offset = file
+            .read(len - size_u32, size_u32)
+            .await?
+            .as_slice()
+            .get_u32() as u64;
 
         let bloom_filter = Bloom::decode(
-            file.read(bloom_filter_offset, len - bloom_filter_offset - size_u32)?
+            file.read(bloom_filter_offset, len - bloom_filter_offset - size_u32)
+                .await?
                 .as_slice(),
         )?;
 
         let block_meta_offset = file
-            .read(bloom_filter_offset - size_u32, size_u32)?
+            .read(bloom_filter_offset - size_u32, size_u32)
+            .await?
             .as_slice()
             .get_u32() as u64;
 
         let raw_meta = file.read(
             block_meta_offset,
             bloom_filter_offset - block_meta_offset - size_u32,
-        )?;
+        ).await?;
 
         let (block_meta, max_ts) = BlockMeta::decode_block_meta(raw_meta.as_slice())?;
 
@@ -276,7 +222,7 @@ impl SsTable {
     }
 
     /// Read a block from the disk.
-    pub fn read_block(&self, block_idx: usize) -> Result<Arc<Block>> {
+    pub async fn read_block(&self, block_idx: usize) -> Result<Arc<Block>> {
         let offset = self.block_meta[block_idx].offset;
         let offset_next = self
             .block_meta
@@ -285,7 +231,8 @@ impl SsTable {
 
         let data = self
             .file
-            .read(offset as u64, (offset_next - offset) as u64)?;
+            .read(offset as u64, (offset_next - offset) as u64)
+            .await?;
 
         let block_len = offset_next - offset - 4;
         let block = &data[..(data.len() - SIZEOF_U32)];
@@ -299,14 +246,15 @@ impl SsTable {
     }
 
     /// Read a block from disk, with block cache. (Day 4)
-    pub fn read_block_cached(&self, block_idx: usize) -> Result<Arc<Block>> {
+    pub async fn read_block_cached(&self, block_idx: usize) -> Result<Arc<Block>> {
         if let Some(cache) = &self.block_cache {
             let block = cache
-                .try_get_with((self.id, block_idx), || self.read_block(block_idx))
+                .try_get_with((self.id, block_idx), self.read_block(block_idx))
+                .await
                 .map_err(|e| anyhow!("{}", e))?;
             Ok(block)
         } else {
-            self.read_block(block_idx)
+            self.read_block(block_idx).await
         }
     }
 

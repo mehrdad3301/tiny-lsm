@@ -27,6 +27,7 @@ use crossbeam_skiplist::map::Entry;
 use nom::AsBytes;
 use ouroboros::self_referencing;
 
+use async_trait::async_trait;
 use crate::iterators::StorageIterator;
 use crate::key::{KeyBytes, KeySlice, TS_DEFAULT};
 use crate::table::SsTableBuilder;
@@ -79,19 +80,19 @@ impl MemTable {
     }
 
     /// Create a new mem-table with WAL
-    pub fn create_with_wal(id: usize, path: impl AsRef<Path>) -> Result<Self> {
+    pub async fn create_with_wal(id: usize, path: impl AsRef<Path>) -> Result<Self> {
         Ok(Self {
             map: Arc::new(SkipMap::new()),
             id: id,
-            wal: Some(Wal::create(path)?),
+            wal: Some(Wal::create(path).await?),
             approximate_size: Arc::new(AtomicUsize::new(0)),
         })
     }
 
     /// Create a memtable from WAL
-    pub fn recover_from_wal(id: usize, path: impl AsRef<Path>) -> Result<Self> {
+    pub async fn recover_from_wal(id: usize, path: impl AsRef<Path>) -> Result<Self> {
         let map = Arc::new(SkipMap::new());
-        let wal = Wal::recover(path, &map)?;
+        let wal = Wal::recover(path, &map).await?;
         Ok(Self {
             map: map,
             id: id,
@@ -100,8 +101,8 @@ impl MemTable {
         })
     }
 
-    pub fn for_testing_put_slice(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        self.put(KeySlice::from_slice(key, TS_DEFAULT), value)
+    pub async fn for_testing_put_slice(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        self.put(KeySlice::from_slice(key, TS_DEFAULT), value).await
     }
 
     pub fn for_testing_get_slice(&self, key: &[u8]) -> Option<Bytes> {
@@ -137,7 +138,7 @@ impl MemTable {
     /// In week 1, day 1, simply put the key-value pair into the skipmap.
     /// In week 2, day 6, also flush the data to WAL.
     /// In week 3, day 5, modify the function to use the batch API.
-    pub fn put(&self, key: KeySlice, value: &[u8]) -> Result<()> {
+    pub async fn put(&self, key: KeySlice<'_>, value: &[u8]) -> Result<()> {
         let key_bytes =
             KeyBytes::from_bytes_with_ts(Bytes::copy_from_slice(key.key_ref()), key.ts());
         let size = key.key_len() + value.len();
@@ -145,14 +146,14 @@ impl MemTable {
         self.approximate_size
             .fetch_add(size, std::sync::atomic::Ordering::Relaxed);
         if let Some(wal) = &self.wal {
-            wal.put(key, value)?;
+            wal.put(key, value).await?;
         }
 
         Ok(())
     }
 
     /// Implement this in week 3, day 5; if you want to implement this earlier, use `&[u8]` as the key type.
-    pub fn put_batch(&self, data: &[(KeySlice, &[u8])]) -> Result<()> {
+    pub async fn put_batch(&self, data: &[(KeySlice<'_>, &[u8])]) -> Result<()> {
         for (key, value) in data {
             let key_bytes = key.to_key_vec().into_key_bytes();
             let size = key.key_len() + value.len();
@@ -160,22 +161,18 @@ impl MemTable {
             self.approximate_size
                 .fetch_add(size, std::sync::atomic::Ordering::Relaxed);
         }
-        if let Some(wal) = &self.wal {
-            wal.put_batch(data)?;
-        }
-
         Ok(())
     }
 
-    pub fn sync_wal(&self) -> Result<()> {
+    pub async fn sync_wal(&self) -> Result<()> {
         if let Some(ref wal) = self.wal {
-            wal.sync()?;
+            wal.sync().await?;
         }
         Ok(())
     }
 
     /// Get an iterator over a range of keys.
-    pub fn scan(&self, lower: Bound<KeySlice>, upper: Bound<KeySlice>) -> MemTableIterator {
+    pub fn scan(&self, lower: Bound<KeySlice<'_>>, upper: Bound<KeySlice<'_>>) -> MemTableIterator {
         let (lower, upper) = (map_key_bound(lower), map_key_bound(upper));
         let mut iter = MemTableIteratorBuilder {
             map: self.map.clone(),
@@ -188,7 +185,7 @@ impl MemTable {
     }
 
     /// Flush the mem-table to SSTable. Implement in week 1 day 6.
-    pub fn flush(&self, builder: &mut SsTableBuilder) -> Result<()> {
+    pub async fn flush(&self, builder: &mut SsTableBuilder) -> Result<()> {
         let mut iter = self.scan(Bound::Unbounded, Bound::Unbounded);
         loop {
             if !iter.is_valid() {

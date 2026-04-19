@@ -19,6 +19,7 @@ use core::panic;
 use std::ops::Bound;
 
 use anyhow::{Result, bail};
+use async_trait::async_trait;
 use bytes::Bytes;
 
 use crate::{
@@ -46,7 +47,7 @@ pub struct LsmIterator {
 }
 
 impl LsmIterator {
-    pub(crate) fn new(
+    pub(crate) async fn new(
         iter: LsmIteratorInner,
         end_bound: Bound<Bytes>,
         read_ts: u64,
@@ -114,6 +115,7 @@ impl LsmIterator {
     }
 }
 
+#[async_trait]
 impl StorageIterator for LsmIterator {
     type KeyType<'a> = &'a [u8];
 
@@ -156,6 +158,7 @@ impl<I: StorageIterator> FusedIterator<I> {
     }
 }
 
+#[async_trait]
 impl<I: StorageIterator> StorageIterator for FusedIterator<I> {
     type KeyType<'a>
         = I::KeyType<'a>

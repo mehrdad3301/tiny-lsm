@@ -21,23 +21,23 @@ use crate::{
     key::{KeySlice, KeyVec},
 };
 
-#[test]
-fn test_block_build_single_key() {
+#[tokio::test]
+async fn test_block_build_single_key() {
     let mut builder = BlockBuilder::new(16);
     assert!(builder.add(KeySlice::for_testing_from_slice_no_ts(b"233"), b"233333"));
     builder.build();
 }
 
-#[test]
-fn test_block_build_full() {
+#[tokio::test]
+async fn test_block_build_full() {
     let mut builder = BlockBuilder::new(16);
     assert!(builder.add(KeySlice::for_testing_from_slice_no_ts(b"11"), b"11"));
     assert!(!builder.add(KeySlice::for_testing_from_slice_no_ts(b"22"), b"22"));
     builder.build();
 }
 
-#[test]
-fn test_block_build_large_1() {
+#[tokio::test]
+async fn test_block_build_large_1() {
     let mut builder = BlockBuilder::new(16);
     assert!(builder.add(
         KeySlice::for_testing_from_slice_no_ts(b"11"),
@@ -46,8 +46,8 @@ fn test_block_build_large_1() {
     builder.build();
 }
 
-#[test]
-fn test_block_build_large_2() {
+#[tokio::test]
+async fn test_block_build_large_2() {
     let mut builder = BlockBuilder::new(16);
     assert!(builder.add(KeySlice::for_testing_from_slice_no_ts(b"11"), b"1"));
     assert!(!builder.add(
@@ -78,19 +78,19 @@ fn generate_block() -> Block {
     builder.build()
 }
 
-#[test]
-fn test_block_build_all() {
+#[tokio::test]
+async fn test_block_build_all() {
     generate_block();
 }
 
-#[test]
-fn test_block_encode() {
+#[tokio::test]
+async fn test_block_encode() {
     let block = generate_block();
     block.encode();
 }
 
-#[test]
-fn test_block_decode() {
+#[tokio::test]
+async fn test_block_decode() {
     let block = generate_block();
     let encoded = block.encode();
     let decoded_block = Block::decode(&encoded);
@@ -102,8 +102,8 @@ fn as_bytes(x: &[u8]) -> Bytes {
     Bytes::copy_from_slice(x)
 }
 
-#[test]
-fn test_block_iterator() {
+#[tokio::test]
+async fn test_block_iterator() {
     let block = Arc::new(generate_block());
     let mut iter = BlockIterator::create_and_seek_to_first(block);
     for _ in 0..5 {
@@ -130,8 +130,8 @@ fn test_block_iterator() {
     }
 }
 
-#[test]
-fn test_block_seek_key() {
+#[tokio::test]
+async fn test_block_seek_key() {
     let block = Arc::new(generate_block());
     let mut iter = BlockIterator::create_and_seek_to_key(block, key_of(0).as_key_slice());
     for offset in 1..=5 {

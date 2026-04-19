@@ -15,22 +15,19 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
-use std::fs::OpenOptions;
-use std::io::{BufReader, Write};
 use std::path::Path;
 use std::sync::Arc;
-use std::{fs::File, io::Read};
 
 use anyhow::{Result, bail};
-use bytes::{Buf, BufMut, BytesMut};
-use parking_lot::{Mutex, MutexGuard};
+use bytes::{Buf, BufMut};
 use serde::{Deserialize, Serialize};
-use serde_json::Deserializer;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Mutex;
 
 use crate::compact::CompactionTask;
 
 pub struct Manifest {
-    file: Arc<Mutex<File>>,
+    file: Arc<Mutex<tokio::fs::File>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -41,27 +38,29 @@ pub enum ManifestRecord {
 }
 
 impl Manifest {
-    pub fn create(path: impl AsRef<Path>) -> Result<Self> {
+    pub async fn create(path: impl AsRef<Path>) -> Result<Self> {
+        let file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .await?;
         Ok(Self {
-            file: Arc::new(Mutex::new(
-                OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create_new(true)
-                    .open(path)?,
-            )),
+            file: Arc::new(Mutex::new(file)),
         })
     }
 
-    pub fn recover(path: impl AsRef<Path>) -> Result<(Self, Vec<ManifestRecord>)> {
-        // open manifest file
-        let mut file = OpenOptions::new().read(true).append(true).open(path)?;
+    pub async fn recover(path: impl AsRef<Path>) -> Result<(Self, Vec<ManifestRecord>)> {
+        let mut file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .append(true)
+            .open(path)
+            .await?;
 
         let mut buf = vec![];
-        file.read_to_end(&mut buf)?;
+        file.read_to_end(&mut buf).await?;
         let mut buf = buf.as_slice();
 
-        // decode manifest records
         let mut manifest_records = vec![];
         while buf.has_remaining() {
             let len = buf.get_u64() as usize;
@@ -81,24 +80,20 @@ impl Manifest {
         Ok((manifest, manifest_records))
     }
 
-    pub fn add_record(
-        &self,
-        _state_lock_observer: &MutexGuard<()>,
-        record: ManifestRecord,
-    ) -> Result<()> {
-        self.add_record_when_init(record)
+    pub async fn add_record(&self, record: ManifestRecord) -> Result<()> {
+        self.add_record_when_init(record).await
     }
 
-    pub fn add_record_when_init(&self, record: ManifestRecord) -> Result<()> {
-        let mut file = self.file.lock();
+    pub async fn add_record_when_init(&self, record: ManifestRecord) -> Result<()> {
+        let mut file = self.file.lock().await;
         let mut buf = vec![];
         let record = serde_json::to_vec(&record)?;
         let checksum = crc32fast::hash(&record);
         buf.put_u64(record.len() as u64);
         buf.put(&record[..]);
         buf.put_u32(checksum);
-        file.write_all(&buf)?;
-        file.sync_all()?;
+        file.write_all(&buf).await?;
+        file.sync_all().await?;
         Ok(())
     }
 }

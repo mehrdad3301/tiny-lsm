@@ -114,7 +114,7 @@ impl SsTableBuilder {
         self.data.is_empty() && self.builder.is_empty()
     }
     /// Builds the SSTable and writes it to the given path. Use the `FileObject` structure to manipulate the disk objects.
-    pub fn build(
+    pub async fn build(
         #[allow(unused_mut)] mut self,
         id: usize,
         block_cache: Option<Arc<BlockCache>>,
@@ -134,12 +134,12 @@ impl SsTableBuilder {
         bloom_filter.encode(&mut self.data);
         self.data.put_u32(bloom_filter_offset as u32);
 
-        let file = FileObject::create(path.as_ref(), self.data)?;
-        SsTable::open(id, block_cache, file)
+        let file = FileObject::create(path.as_ref(), self.data).await?;
+        SsTable::open(id, block_cache, file).await
     }
 
     #[cfg(test)]
-    pub(crate) fn build_for_test(self, path: impl AsRef<Path>) -> Result<SsTable> {
-        self.build(0, None, path)
+    pub(crate) async fn build_for_test(self, path: impl AsRef<Path>) -> Result<SsTable> {
+        self.build(0, None, path).await
     }
 }
