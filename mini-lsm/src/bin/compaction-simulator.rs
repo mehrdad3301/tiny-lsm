@@ -1,1 +1,0 @@
-../../../mini-lsm-starter/src/bin/compaction-simulator.rs

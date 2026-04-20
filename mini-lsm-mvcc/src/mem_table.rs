@@ -63,6 +63,8 @@ pub(crate) fn map_key_bound(bound: Bound<KeySlice>) -> Bound<KeyBytes> {
     }
 }
 
+/// ??? why do we need this ? the LsmIterator already 
+/// takes care of read_ts 
 /// Create a bound of `KeySlice` from a bound of `&[u8]`.
 pub(crate) fn map_key_bound_plus_ts<'a>(
     lower: Bound<&'a [u8]>,
@@ -80,6 +82,7 @@ pub(crate) fn map_key_bound_plus_ts<'a>(
                 // Note that we order the ts descending, but for a MVCC scan, we need all the history
                 // so that we can access the latest key in case it is not updated in the current ts.
                 // Therefore, we need to scan all the way to ts 0.
+                // ??? why 
                 Bound::Included(KeySlice::from_slice(x, TS_RANGE_END))
             }
             Bound::Excluded(x) => Bound::Excluded(KeySlice::from_slice(x, TS_RANGE_BEGIN)),
@@ -166,7 +169,7 @@ impl MemTable {
                 key.to_key_vec().into_key_bytes(),
                 Bytes::copy_from_slice(value),
             );
-        }
+        } 
         self.approximate_size
             .fetch_add(estimated_size, std::sync::atomic::Ordering::Relaxed);
         if let Some(ref wal) = self.wal {

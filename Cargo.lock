@@ -646,30 +646,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
-name = "mini-lsm"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "arc-swap",
- "bytes",
- "clap",
- "crc32fast",
- "crossbeam-channel",
- "crossbeam-epoch",
- "crossbeam-skiplist",
- "farmhash",
- "moka",
- "nom",
- "ouroboros",
- "parking_lot",
- "rand",
- "rustyline",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "mini-lsm-mvcc"
 version = "0.2.0"
 dependencies = [
