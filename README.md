@@ -1,118 +1,119 @@
-![banner](./mini-lsm-book/src/mini-lsm-logo.png)
-
-# LSM in a Week
+# Tiny-LSM: Async LSM-Tree Storage Engine
 
 [![CI (main)](https://github.com/skyzh/mini-lsm/actions/workflows/main.yml/badge.svg)](https://github.com/skyzh/mini-lsm/actions/workflows/main.yml)
 
-Build a simple key-value storage engine in a week! And extend your LSM engine on the second + third week.
+TinyLSM is a key-value storage engine built on top of [mini-lsm](https://skyzh.github.io/mini-lsm) by Alex Chi Z, fully rewritten with async I/O using Tokio. Includes day-by-day solution checkpoints for the first three weeks and YCSB benchmarks comparing the async implementation against the original sync MVCC baseline.
 
-## [Book](https://skyzh.github.io/mini-lsm)
+## What This Project Does
 
-The Mini-LSM book is available at [https://skyzh.github.io/mini-lsm](https://skyzh.github.io/mini-lsm). You may follow this guide and implement the Mini-LSM storage engine. We have 3 weeks (parts) of the course, each of them consists of 7 days (chapters).
+- **Async engine** (`mini-lsm-starter/`) — complete LSM-tree with `async fn` on all I/O paths (WAL, SST reads, compaction, flush). Uses a shared tokio multi-threaded runtime.
+- **Sync MVCC baseline** (`mini-lsm-mvcc/`) — original synchronous reference solution with MVCC, used as the benchmark baseline.
+- **Day-by-day solutions** - check the commit history for day-by-day solution of the first three weeks
 
-## Community
+## Async Architecture
 
-You may join skyzh's Discord server and study with the mini-lsm community.
+The entire I/O and compute stack was converted to async:
 
-[![Join skyzh's Discord Server](mini-lsm-book/src/discord-badge.svg)](https://skyzh.dev/join/discord)
+| Component | Async Entry Point |
+|---|---|
+| Storage engine | `LsmStorage::open()`, `put()`, `get()`, `delete()`, `scan()`, `sync()`, `close()` |
+| Compaction | `compact()`, `spawn_compaction_task()`, `spawn_flush_task()` |
+| WAL | `Wal::create()`, `recover()`, `put()`, `put_batch()`, `sync()` |
+| Iterators | `ConcatIterator::create_and_seek_to_first()`, `create_and_seek_to_key()` |
+| SST recovery | parallel SST opens during recovery |
 
-**Add Your Solution**
+Key dependencies: `tokio` (multi-threaded runtime), `futures`, `moka` (async cache).
 
-If you finished at least one full week of this course, you can add your solution to the community solution list at [SOLUTIONS.md](./SOLUTIONS.md). You can submit a pull request and we might do a quick review of your code in return of your hard work.
+## YCSB Benchmark Results
 
-## Development
+Benchmarks run with `--compaction leveled --record-count 100000 --operation-count 100000 --seed 42`, WAL disabled. Full results in [`ycsb-results/`](./ycsb-results/).
 
-**For Students**
+### Single-Threaded (Workloads A–F)
 
-You should modify code in `mini-lsm-starter` directory.
+Async dominates on workloads:
+
+| Workload | Async run ops/s | Baseline run ops/s | Delta |
+|---|---:|---:|---:|
+| A (50/50 r/w) | 575,587 | 360,070 | **+59.9%** |
+| B (95/5 r/w) | 542,511 | 285,615 | **+89.9%** |
+| C (100% read) | 607,417 | 299,233 | **+103.0%** |
+| D (read latest) | 575,012 | 286,546 | **+100.7%** |
+| F (50/50 r/w) | 353,934 | 182,644 | **+93.8%** |
+
+### Multi-Threaded Highlights
+
+Full multi-threaded results in [`ycsb-results/mt-validation-comparison.md`](./ycsb-results/mt-validation-comparison.md).
+
+**Workload B (95% read) — async wins at every thread count:**
+
+| Threads | Async ops/s | Baseline ops/s | Throughput delta | p99 latency delta |
+|---:|---:|---:|---:|---:|
+| 1 | 693,319 | 460,622 | +50.5% | -27.1% |
+| 2 | 1,138,147 | 756,750 | +50.4% | -29.0% |
+| 4 | 1,921,674 | 1,300,356 | +47.8% | -28.1% |
+| 8 | 1,378,717 | 1,179,574 | +16.9% | +43.8% |
+
+**Workload C (100% read) — largest async advantage:**
+
+| Threads | Async ops/s | Baseline ops/s | Throughput delta | p99 latency delta |
+|---:|---:|---:|---:|---:|
+| 1 | 849,700 | 474,711 | +79.0% | -38.93% |
+| 2 | 1,296,645 | 762,194 | +70.1% | -36.88% |
+| 4 | 1,750,440 | 1,297,356 | +34.9% | -29.00% |
+| 8 | 1,414,918 | 1,149,336 | +23.1% | -0.94% |
+
+**Workload E (short range scans) — minimal improvement due to sync block reads:**
+
+| Threads | Async ops/s | Baseline ops/s | Throughput delta | p95 latency delta | p99 latency delta |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 163,664 | 163,199 | +0.3% | +1.8% | -2.3% |
+| 2 | 259,707 | 285,955 | -9.2% | +3.5% | +23.1% |
+| 4 | 469,397 | 530,422 | -11.5% | +23.6% | +139.3% |
+| 8 | 580,822 | 500,612 | +16.0% | -18.9% | -34.0% |
+
+Workload E shows little to no improvement over the sync baseline. The bottleneck is that `SsTableIterator` reads the next block **synchronously** — on a scan, the iterator decodes the current block and immediately issues a blocking read for the next one. This synchronous block fetch dominates scan latency, so async on the rest of the pipeline has almost no effect. Prefetching or overlapped I/O on the iterator would be needed to close this gap.
+
+### Key Takeaways
+
+- **Read-heavy workloads**: async wins by 50–103% at single thread, maintaining advantage up to 4 threads.
+- **Latency**: async p50/p95/p99 significantly lower on read paths (up to -42.9% p99).
+- **Scaling**: baseline scales better at high thread counts on mixed workloads; async scales better on scan-heavy workloads (workload E).
+- **Write-heavy**: mixed results — async faster at low concurrency, baseline catches up at 4+ threads. 
+
+## Quick Start
+
+```bash
+# Build everything
+cargo build --release
+
+# Run the async CLI
+cargo run --release --bin mini-lsm-cli
+
+# Run YCSB benchmark (async)
+cargo run -p mini-lsm-starter --release --bin ycsb-bench -- \
+  --path /tmp/ycsb.db --workload a --compaction leveled \
+  --record-count 100000 --operation-count 100000
+
+# Run YCSB benchmark (sync MVCC baseline)
+cargo run -p mini-lsm-mvcc --release --bin ycsb-bench-mvcc-ref -- \
+  --path /tmp/ycsb-mvcc.db --workload a --compaction leveled \
+  --record-count 100000 --operation-count 100000
+```
+
+## Project Structure
 
 ```
-cargo x install-tools
-cargo x copy-test --week 1 --day 1
-cargo x scheck
-cargo run --bin mini-lsm-cli
-cargo run --bin compaction-simulator
+mini-lsm-starter/    # Async LSM engine (student code + solution)
+mini-lsm-mvcc/       # Sync MVCC reference solution (benchmark baseline)
+mini-lsm-book/       # Course book (original by skyzh)
+ycsb-results/        # Benchmark data and comparison tables
+xtask/               # Build tools
 ```
 
-**For Course Developers**
+## Acknowledgments
 
-You should modify `mini-lsm` and `mini-lsm-mvcc`
-
-```
-cargo x install-tools
-cargo x check
-cargo x book
-```
-
-If you changed public API in the reference solution, you might also need to synchronize it to the starter crate.
-To do this, use `cargo x sync`.
-
-## Code Structure
-
-* mini-lsm: the final solution code for <= week 2
-* mini-lsm-mvcc: the final solution code for week 3 MVCC
-* mini-lsm-starter: the starter code
-* mini-lsm-book: the course
-
-We have another repo mini-lsm-solution-checkpoint at [https://github.com/skyzh/mini-lsm-solution-checkpoint](https://github.com/skyzh/mini-lsm-solution-checkpoint). In this repo, each commit corresponds to a chapter in the course. We will not update the solution checkpoint very often.
-
-## Demo
-
-You can run the reference solution by yourself to gain an overview of the system before you start.
-
-```
-cargo run --bin mini-lsm-cli-ref
-cargo run --bin mini-lsm-cli-mvcc-ref
-```
-
-And we have a compaction simulator to experiment with your compaction algorithm implementation,
-
-```
-cargo run --bin compaction-simulator-ref
-cargo run --bin compaction-simulator-mvcc-ref
-```
-
-## Course Structure
-
-We have 3 weeks + 1 extra week (in progress) for this course.
-
-* Week 1: Storage Format + Engine Skeleton
-* Week 2: Compaction and Persistence
-* Week 3: Multi-Version Concurrency Control
-* The Extra Week / Rest of Your Life: Optimizations (unlikely to be available in 2025...)
-
-![Course Roadmap](./mini-lsm-book/src/lsm-tutorial/00-full-overview.svg)
-
-| Week + Chapter | Topic                                                       |
-| -------------- | ----------------------------------------------------------- |
-| 1.1            | Memtable                                                    |
-| 1.2            | Merge Iterator                                              |
-| 1.3            | Block                                                       |
-| 1.4            | Sorted String Table (SST)                                   |
-| 1.5            | Read Path                                                   |
-| 1.6            | Write Path                                                  |
-| 1.7            | SST Optimizations: Prefix Key Encoding + Bloom Filters      |
-| 2.1            | Compaction Implementation                                   |
-| 2.2            | Simple Compaction Strategy (Traditional Leveled Compaction) |
-| 2.3            | Tiered Compaction Strategy (RocksDB Universal Compaction)   |
-| 2.4            | Leveled Compaction Strategy (RocksDB Leveled Compaction)    |
-| 2.5            | Manifest                                                    |
-| 2.6            | Write-Ahead Log (WAL)                                       |
-| 2.7            | Batch Write and Checksums                                   |
-| 3.1            | Timestamp Key Encoding                                      |
-| 3.2            | Snapshot Read - Memtables and Timestamps                    |
-| 3.3            | Snapshot Read - Transaction API                             |
-| 3.4            | Watermark and Garbage Collection                            |
-| 3.5            | Transactions and Optimistic Concurrency Control             |
-| 3.6            | Serializable Snapshot Isolation                             |
-| 3.7            | Compaction Filters                                          |
-
-## Related Projects
-
-mini-lsm inspired several projects used in production.
-
-* [SlateDB](https://slatedb.io/docs/architecture/) is an LSM engine over the object storage system.
-* [Tonbo](https://tonbo.io/about) stores parquet files directly on the object storage and organizes them in an LSM tree structure.
+- [Alex Chi Z (skyzh)](https://github.com/skyzh) — original [mini-lsm](https://github.com/skyzh/mini-lsm) course and framework.
+- [SlateDB](https://slatedb.io/) and [Tonbo](https://tonbo.io/) — production LSM engines inspired by mini-lsm.
 
 ## License
 
