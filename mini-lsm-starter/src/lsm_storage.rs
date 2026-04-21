@@ -668,35 +668,49 @@ impl LsmStorageInner {
         for record in batch {
             match record {
                 WriteBatchRecord::Put(key, value) => {
-                    let guard = self.state.read();
-                    guard
-                        .memtable
-                        .put(KeySlice::from_slice(key.as_ref(), ts), value.as_ref()).await?;
-                    if guard.memtable.approximate_size() > self.options.target_sst_size {
-                        drop(guard);
-                        let lock = self.state_lock.lock().await;
+                    let memtable = {
                         let guard = self.state.read();
-                        // check again, another thread might have frozen memtable
-                        if guard.memtable.approximate_size() > self.options.target_sst_size {
-                            drop(guard);
-                            drop(lock);
+                        Arc::clone(&guard.memtable)
+                    };
+                    memtable
+                        .put(KeySlice::from_slice(key.as_ref(), ts), value.as_ref())
+                        .await?;
+                    let should_freeze = {
+                        let guard = self.state.read();
+                        guard.memtable.approximate_size() > self.options.target_sst_size
+                    };
+                    if should_freeze {
+                        let lock = self.state_lock.lock().await;
+                        let size = {
+                            let guard = self.state.read();
+                            guard.memtable.approximate_size()
+                        };
+                        drop(lock);
+                        if size > self.options.target_sst_size {
                             self.force_freeze_memtable().await?;
                         }
                     }
                 }
                 WriteBatchRecord::Del(key) => {
-                    let guard = self.state.read();
-                    guard
-                        .memtable
-                        .put(KeySlice::from_slice(key.as_ref(), ts), b"").await?;
-                    if guard.memtable.approximate_size() > self.options.target_sst_size {
-                        drop(guard);
-                        let lock = self.state_lock.lock().await;
+                    let memtable = {
                         let guard = self.state.read();
-                        // check again, another thread might have frozen memtable
-                        if guard.memtable.approximate_size() > self.options.target_sst_size {
-                            drop(guard);
-                            drop(lock);
+                        Arc::clone(&guard.memtable)
+                    };
+                    memtable
+                        .put(KeySlice::from_slice(key.as_ref(), ts), b"")
+                        .await?;
+                    let should_freeze = {
+                        let guard = self.state.read();
+                        guard.memtable.approximate_size() > self.options.target_sst_size
+                    };
+                    if should_freeze {
+                        let lock = self.state_lock.lock().await;
+                        let size = {
+                            let guard = self.state.read();
+                            guard.memtable.approximate_size()
+                        };
+                        drop(lock);
+                        if size > self.options.target_sst_size {
                             self.force_freeze_memtable().await?;
                         }
                     }

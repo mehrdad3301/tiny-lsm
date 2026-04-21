@@ -70,18 +70,20 @@ impl Transaction {
             panic!("attempted to modify a commited transaction !");
         }
 
-        let mut iter = TxnLocalIteratorBuilder {
+        let lsm_iter = self.inner.scan_with_ts(lower, upper, self.read_ts).await?;
+
+        let mut local_iter = TxnLocalIteratorBuilder {
             map: self.local_storage.clone(),
             iter_builder: |map| map.range((map_bound(lower), map_bound(upper))),
             item: (Bytes::new(), Bytes::new()),
         }
         .build();
-        iter.next()?;
+        local_iter.next()?;
 
         TxnIterator::create(
             self.clone(),
-            TwoMergeIterator::create(iter, self.inner.scan_with_ts(lower, upper, self.read_ts).await?)?,
-        ).await
+            TwoMergeIterator::create(local_iter, lsm_iter)?,
+        )
     }
 
     pub fn put(&self, key: &[u8], value: &[u8]) {
@@ -115,15 +117,18 @@ impl Transaction {
         // check serializability
         if self.inner.options.serializable {
             if let Some(key_hashes) = &self.key_hashes {
-                let (write_set, read_set) = &*key_hashes.lock() ;
-                let commited_txn = self.inner.mvcc().committed_txns.lock().await ;
+                let (write_set, read_set) = {
+                    let guard = key_hashes.lock();
+                    (guard.0.clone(), guard.1.clone())
+                };
                 if write_set.is_empty() {
-                    return Ok(()) ;
+                    return Ok(());
                 }
 
-                for (_, write_set) in commited_txn.range(
+                let commited_txn = self.inner.mvcc().committed_txns.lock().await;
+                for (_, write_set_txn) in commited_txn.range(
                     (Bound::Excluded(self.read_ts), Bound::Excluded(commit_ts))) {
-                    for keys in write_set.key_hashes.iter() {
+                    for keys in write_set_txn.key_hashes.iter() {
                         if read_set.contains(keys) {
                             return Err(anyhow::anyhow!("serialization failure due to concurrent write-write conflict!"))
                         }
@@ -206,7 +211,6 @@ impl TxnLocalIterator {
     }
 }
 
-#[async_trait]
 impl StorageIterator for TxnLocalIterator {
     type KeyType<'a> = &'a [u8];
 
@@ -235,7 +239,7 @@ pub struct TxnIterator {
 }
 
 impl TxnIterator {
-    pub async fn create(
+    pub fn create(
         txn: Arc<Transaction>,
         iter: TwoMergeIterator<TxnLocalIterator, FusedIterator<LsmIterator>>,
     ) -> Result<Self> {

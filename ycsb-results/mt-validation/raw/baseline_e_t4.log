@@ -1,0 +1,21 @@
+[LOAD] Inserting 100000 records with 4 workers...
+[LOAD] Done in 87.233041ms (1146355 ops/sec)
+[WARMUP] Running 10000 operations (workload E) with 4 workers...
+[WARMUP] Done in 22.882167ms
+[RUN] Running 100000 operations (workload E) with 4 workers...
+[Latency] microseconds:
+  min   = 0.21
+  avg   = 7.35
+  p50   = 7.29
+  p95   = 9.17
+  p99   = 11.75
+  p99.9 = 35.62
+  max   = 148.83
+[Per-thread]
+  worker  0: 134470 ops/sec (ops=25000)
+  worker  1: 134339 ops/sec (ops=25000)
+  worker  2: 132654 ops/sec (ops=25000)
+  worker  3: 133608 ops/sec (ops=25000)
+[Summary]
+  Load throughput: 1146355 ops/sec
+  Run throughput:  530422 ops/sec

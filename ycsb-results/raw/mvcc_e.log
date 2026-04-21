@@ -1,0 +1,126 @@
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> mini-lsm-mvcc/src/block/iterator.rs:77:16
+   |
+77 |     pub fn key(&self) -> KeySlice {
+   |                ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+   |                |
+   |                the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+   = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+   |
+77 |     pub fn key(&self) -> KeySlice<'_> {
+   |                                  ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> mini-lsm-mvcc/src/iterators/concat_iterator.rs:111:12
+    |
+111 |     fn key(&self) -> KeySlice {
+    |            ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |            |
+    |            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+111 |     fn key(&self) -> KeySlice<'_> {
+    |                              ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> mini-lsm-mvcc/src/iterators/merge_iterator.rs:97:12
+   |
+97 |     fn key(&self) -> KeySlice {
+   |            ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+   |            |
+   |            the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+97 |     fn key(&self) -> KeySlice<'_> {
+   |                              ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> mini-lsm-mvcc/src/key.rs:89:25
+   |
+89 |     pub fn as_key_slice(&self) -> KeySlice {
+   |                         ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+   |                         |
+   |                         the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+89 |     pub fn as_key_slice(&self) -> KeySlice<'_> {
+   |                                           ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> mini-lsm-mvcc/src/key.rs:119:25
+    |
+119 |     pub fn as_key_slice(&self) -> KeySlice {
+    |                         ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |                         |
+    |                         the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+119 |     pub fn as_key_slice(&self) -> KeySlice<'_> {
+    |                                           ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> mini-lsm-mvcc/src/mem_table.rs:263:12
+    |
+263 |     fn key(&self) -> KeySlice {
+    |            ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |            |
+    |            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+263 |     fn key(&self) -> KeySlice<'_> {
+    |                              ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> mini-lsm-mvcc/src/table/iterator.rs:99:12
+   |
+99 |     fn key(&self) -> KeySlice {
+   |            ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+   |            |
+   |            the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+99 |     fn key(&self) -> KeySlice<'_> {
+   |                              ++++
+
+warning: `mini-lsm-mvcc` (lib) generated 7 warnings (run `cargo fix --lib -p mini-lsm-mvcc` to apply 7 suggestions)
+    Finished `release` profile [optimized] target(s) in 0.04s
+     Running `/var/folders/7y/9vm_s53s3g1cnhxrgsh654700000gn/T/cursor-sandbox-cache/8bff2b6da4d5904d3bf92875562e45bd/cargo-target/release/ycsb-bench-mvcc-ref --path ycsb-results/db-mvcc-e.db --compaction leveled --workload e --record-count 100000 --operation-count 100000 --seed 42`
+[LOAD] Inserting 100000 records...
+[LOAD] Done in 64.411834ms (1552510 ops/sec)
+[RUN] Running 100000 operations (workload E)...
+[RUN] Done in 707.220208ms (141399 ops/sec)
+
+[Latency] microseconds:
+  min   = 0.33
+  avg   = 6.89
+  p50   = 7.04
+  p95   = 8.08
+  p99   = 11.12
+  p99.9 = 16.71
+  max   = 72.17
+
+[Summary]
+  Load throughput: 1552510 ops/sec
+  Run throughput:  141399 ops/sec
+flushed 0.sst with size=1996871
+flushed 1.sst with size=1997140
+flushed 2.sst with size=1996961
+flushed 3.sst with size=1997101
+flushed 4.sst with size=1997150
+flushed 5.sst with size=1997163
+flushed 6.sst with size=803849

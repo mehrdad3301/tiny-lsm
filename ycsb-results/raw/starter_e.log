@@ -1,0 +1,300 @@
+warning: unused import: `TS_DEFAULT`
+  --> mini-lsm-starter/src/block/builder.rs:18:36
+   |
+18 | use crate::key::{KeySlice, KeyVec, TS_DEFAULT};
+   |                                    ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+  --> mini-lsm-starter/src/block/builder.rs:73:13
+   |
+73 |             /// ??? why check for !self.is_empty()
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+74 |             return false;
+   |             ------------ rustdoc does not generate documentation for expressions
+   |
+   = help: use `//` for a plain comment
+   = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `BufMut` and `Bytes`
+  --> mini-lsm-starter/src/block/iterator.rs:18:18
+   |
+18 | use bytes::{Buf, BufMut, Bytes};
+   |                  ^^^^^^  ^^^^^
+
+warning: unused import: `core::num`
+  --> mini-lsm-starter/src/block.rs:21:5
+   |
+21 | use core::num;
+   |     ^^^^^^^^^
+
+warning: unused import: `crossbeam_skiplist::base`
+  --> mini-lsm-starter/src/compact/leveled.rs:17:5
+   |
+17 | use crossbeam_skiplist::base;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `cmp::max`
+  --> mini-lsm-starter/src/compact/tiered.rs:15:11
+   |
+15 | use std::{cmp::max, collections::HashMap};
+   |           ^^^^^^^^
+
+warning: unused import: `hash_set`
+  --> mini-lsm-starter/src/compact.rs:22:33
+   |
+22 | use std::collections::{HashSet, hash_set};
+   |                                 ^^^^^^^^
+
+warning: unused import: `std::fmt::UpperExp`
+  --> mini-lsm-starter/src/compact.rs:23:5
+   |
+23 | use std::fmt::UpperExp;
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::fs`
+  --> mini-lsm-starter/src/compact.rs:24:5
+   |
+24 | use std::fs;
+   |     ^^^^^^^
+
+warning: unused imports: `Error` and `anyhow`
+  --> mini-lsm-starter/src/compact.rs:28:14
+   |
+28 | use anyhow::{Error, Result, anyhow};
+   |              ^^^^^          ^^^^^^
+
+warning: unused import: `rand::seq::index::sample`
+  --> mini-lsm-starter/src/compact.rs:30:5
+   |
+30 | use rand::seq::index::sample;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Key`
+  --> mini-lsm-starter/src/compact.rs:41:18
+   |
+41 | use crate::key::{Key, KeySlice};
+   |                  ^^^
+
+warning: unused import: `crate::mvcc::watermark`
+  --> mini-lsm-starter/src/compact.rs:44:5
+   |
+44 | use crate::mvcc::watermark;
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `self`
+  --> mini-lsm-starter/src/compact.rs:45:20
+   |
+45 | use crate::table::{self, SsTable, SsTableBuilder, SsTableIterator};
+   |                    ^^^^
+
+warning: unused import: `KeyBytes`
+  --> mini-lsm-starter/src/iterators/concat_iterator.rs:24:11
+   |
+24 |     key::{KeyBytes, KeySlice},
+   |           ^^^^^^^^
+
+warning: unused import: `std::fmt::Debug`
+  --> mini-lsm-starter/src/iterators/merge_iterator.rs:21:5
+   |
+21 | use std::fmt::Debug;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::debug`
+  --> mini-lsm-starter/src/iterators/merge_iterator.rs:25:5
+   |
+25 | use crate::debug;
+   |     ^^^^^^^^^^^^
+
+warning: unused import: `key::KeyBytes`
+  --> mini-lsm-starter/src/lsm_iterator.rs:30:5
+   |
+30 |     key::KeyBytes,
+   |     ^^^^^^^^^^^^^
+
+warning: unused import: `BTreeMap`
+  --> mini-lsm-starter/src/lsm_storage.rs:18:24
+   |
+18 | use std::collections::{BTreeMap, BTreeSet, HashMap};
+   |                        ^^^^^^^^
+
+warning: unused import: `std::fs::File`
+  --> mini-lsm-starter/src/lsm_storage.rs:19:5
+   |
+19 | use std::fs::File;
+   |     ^^^^^^^^^^^^^
+
+warning: unused import: `std::mem`
+  --> mini-lsm-starter/src/lsm_storage.rs:20:5
+   |
+20 | use std::mem;
+   |     ^^^^^^^^
+
+warning: unused import: `clap::error::ErrorKind`
+  --> mini-lsm-starter/src/lsm_storage.rs:28:5
+   |
+28 | use clap::error::ErrorKind;
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MutexGuard`
+  --> mini-lsm-starter/src/lsm_storage.rs:30:26
+   |
+30 | use tokio::sync::{Mutex, MutexGuard};
+   |                          ^^^^^^^^^^
+
+warning: unused import: `TS_DEFAULT`
+  --> mini-lsm-starter/src/lsm_storage.rs:43:28
+   |
+43 | use crate::key::{KeySlice, TS_DEFAULT, TS_RANGE_BEGIN, TS_RANGE_END};
+   |                            ^^^^^^^^^^
+
+warning: unused import: `Buf`
+  --> mini-lsm-starter/src/mem_table.rs:24:13
+   |
+24 | use bytes::{Buf, Bytes};
+   |             ^^^
+
+warning: unused import: `async_trait::async_trait`
+  --> mini-lsm-starter/src/mem_table.rs:30:5
+   |
+30 | use async_trait::async_trait;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `bytes::Bytes`
+  --> mini-lsm-starter/src/mvcc.rs:26:5
+   |
+26 | use bytes::Bytes;
+   |     ^^^^^^^^^^^^
+
+warning: unused import: `SIZEOF_U64`
+  --> mini-lsm-starter/src/table.rs:30:39
+   |
+30 | use crate::block::{Block, SIZEOF_U32, SIZEOF_U64};
+   |                                       ^^^^^^^^^^
+
+warning: unused import: `Buf`
+  --> mini-lsm-starter/src/lsm_storage.rs:27:13
+   |
+27 | use bytes::{Buf, Bytes};
+   |             ^^^
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> mini-lsm-starter/src/block/iterator.rs:78:16
+   |
+78 |     pub fn key(&self) -> KeySlice {
+   |                ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+   |                |
+   |                the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+   = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+   |
+78 |     pub fn key(&self) -> KeySlice<'_> {
+   |                                  ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> mini-lsm-starter/src/iterators/concat_iterator.rs:116:12
+    |
+116 |     fn key(&self) -> KeySlice {
+    |            ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |            |
+    |            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+116 |     fn key(&self) -> KeySlice<'_> {
+    |                              ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> mini-lsm-starter/src/iterators/merge_iterator.rs:102:12
+    |
+102 |     fn key(&self) -> KeySlice {
+    |            ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |            |
+    |            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+102 |     fn key(&self) -> KeySlice<'_> {
+    |                              ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> mini-lsm-starter/src/key.rs:89:25
+   |
+89 |     pub fn as_key_slice(&self) -> KeySlice {
+   |                         ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+   |                         |
+   |                         the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+89 |     pub fn as_key_slice(&self) -> KeySlice<'_> {
+   |                                           ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> mini-lsm-starter/src/key.rs:119:25
+    |
+119 |     pub fn as_key_slice(&self) -> KeySlice {
+    |                         ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |                         |
+    |                         the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+119 |     pub fn as_key_slice(&self) -> KeySlice<'_> {
+    |                                           ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> mini-lsm-starter/src/mem_table.rs:257:12
+    |
+257 |     fn key(&self) -> KeySlice {
+    |            ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |            |
+    |            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+257 |     fn key(&self) -> KeySlice<'_> {
+    |                              ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> mini-lsm-starter/src/table/iterator.rs:108:12
+    |
+108 |     fn key(&self) -> KeySlice {
+    |            ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |            |
+    |            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+108 |     fn key(&self) -> KeySlice<'_> {
+    |                              ++++
+
+warning: `mini-lsm-starter` (lib) generated 36 warnings (run `cargo fix --lib -p mini-lsm-starter` to apply 34 suggestions)
+    Finished `release` profile [optimized] target(s) in 0.05s
+     Running `/var/folders/7y/9vm_s53s3g1cnhxrgsh654700000gn/T/cursor-sandbox-cache/8bff2b6da4d5904d3bf92875562e45bd/cargo-target/release/ycsb-bench --path ycsb-results/db-starter-e.db --compaction leveled --workload e --record-count 100000 --operation-count 100000 --seed 42`
+[LOAD] Inserting 100000 records...
+[LOAD] Done in 63.720291ms (1569359 ops/sec)
+[RUN] Running 100000 operations (workload E)...
+[RUN] Done in 708.2465ms (141194 ops/sec)
+
+[Latency] microseconds:
+  min   = 0.33
+  avg   = 6.90
+  p50   = 6.96
+  p95   = 8.50
+  p99   = 11.21
+  p99.9 = 16.92
+  max   = 5405.58
+
+[Summary]
+  Load throughput: 1569359 ops/sec
+  Run throughput:  141194 ops/sec

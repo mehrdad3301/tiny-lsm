@@ -1,0 +1,121 @@
+18 | use crate::key::{KeySlice, KeyVec, TS_DEFAULT};
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+73 |             /// ??? why check for !self.is_empty()
+74 |             return false;
+   = help: use `//` for a plain comment
+   = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+18 | use bytes::{Buf, BufMut, Bytes};
+21 | use core::num;
+17 | use crossbeam_skiplist::base;
+15 | use std::{cmp::max, collections::HashMap};
+22 | use std::collections::{HashSet, hash_set};
+23 | use std::fmt::UpperExp;
+24 | use std::fs;
+28 | use anyhow::{Error, Result, anyhow};
+30 | use rand::seq::index::sample;
+41 | use crate::key::{Key, KeySlice};
+44 | use crate::mvcc::watermark;
+45 | use crate::table::{self, SsTable, SsTableBuilder, SsTableIterator};
+24 |     key::{KeyBytes, KeySlice},
+21 | use std::fmt::Debug;
+25 | use crate::debug;
+30 |     key::KeyBytes,
+18 | use std::collections::{BTreeMap, BTreeSet, HashMap};
+19 | use std::fs::File;
+20 | use std::mem;
+28 | use clap::error::ErrorKind;
+30 | use tokio::sync::{Mutex, MutexGuard};
+43 | use crate::key::{KeySlice, TS_DEFAULT, TS_RANGE_BEGIN, TS_RANGE_END};
+24 | use bytes::{Buf, Bytes};
+30 | use async_trait::async_trait;
+26 | use bytes::Bytes;
+30 | use crate::block::{Block, SIZEOF_U32, SIZEOF_U64};
+27 | use bytes::{Buf, Bytes};
+78 |     pub fn key(&self) -> KeySlice {
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+   = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+78 |     pub fn key(&self) -> KeySlice<'_> {
+   --> mini-lsm-starter/src/iterators/concat_iterator.rs:116:12
+    |
+116 |     fn key(&self) -> KeySlice {
+    |            ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |            |
+    |            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+116 |     fn key(&self) -> KeySlice<'_> {
+    |                              ++++
+   --> mini-lsm-starter/src/iterators/merge_iterator.rs:102:12
+    |
+102 |     fn key(&self) -> KeySlice {
+    |            ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |            |
+    |            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+102 |     fn key(&self) -> KeySlice<'_> {
+    |                              ++++
+89 |     pub fn as_key_slice(&self) -> KeySlice {
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+89 |     pub fn as_key_slice(&self) -> KeySlice<'_> {
+   --> mini-lsm-starter/src/key.rs:119:25
+    |
+119 |     pub fn as_key_slice(&self) -> KeySlice {
+    |                         ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |                         |
+    |                         the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+119 |     pub fn as_key_slice(&self) -> KeySlice<'_> {
+    |                                           ++++
+   --> mini-lsm-starter/src/mem_table.rs:257:12
+    |
+257 |     fn key(&self) -> KeySlice {
+    |            ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |            |
+    |            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+257 |     fn key(&self) -> KeySlice<'_> {
+    |                              ++++
+   --> mini-lsm-starter/src/table/iterator.rs:108:12
+    |
+108 |     fn key(&self) -> KeySlice {
+    |            ^^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |            |
+    |            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+108 |     fn key(&self) -> KeySlice<'_> {
+    |                              ++++
+[LOAD] Inserting 100000 records with 4 workers...
+[LOAD] Done in 113.283ms (882745 ops/sec)
+[WARMUP] Done in 11.863667ms
+[Latency] microseconds:
+  min   = 0.21
+  avg   = 3.97
+  p50   = 3.08
+  p95   = 7.79
+  p99   = 13.04
+  p99.9 = 87.17
+  max   = 1813.58
+[Per-thread]
+  worker  0: 243166 ops/sec (ops=25000)
+  worker  1: 242075 ops/sec (ops=25000)
+  worker  2: 242999 ops/sec (ops=25000)
+  worker  3: 245922 ops/sec (ops=25000)
+[Summary]
+  Load throughput: 882745 ops/sec
+  Run throughput:  967448 ops/sec

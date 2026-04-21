@@ -20,13 +20,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use mini_lsm_starter::compact::{
+use mini_lsm_mvcc::compact::{
     CompactionOptions, LeveledCompactionOptions, SimpleLeveledCompactionOptions,
     TieredCompactionOptions,
 };
-use mini_lsm_starter::iterators::StorageIterator;
-use mini_lsm_starter::lsm_storage::{LsmStorageOptions, MiniLsm};
-// use rand::distributions::Distribution;
+use mini_lsm_mvcc::iterators::StorageIterator;
+use mini_lsm_mvcc::lsm_storage::{LsmStorageOptions, MiniLsm};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -40,16 +39,16 @@ enum CompactionStrategy {
 
 #[derive(Debug, Clone, ValueEnum)]
 enum YcsbWorkload {
-    A, // Update heavy: 50% read, 50% update
-    B, // Read mostly: 95% read, 5% update
-    C, // Read only: 100% read
-    D, // Read latest: 95% read, 5% insert
-    E, // Short ranges: 95% scan, 5% insert
-    F, // Read-modify-write: 50% read, 50% read-modify-write
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
 }
 
 #[derive(Parser, Debug, Clone)]
-#[command(author, version, about = "YCSB-style benchmark for Mini-LSM", long_about = None)]
+#[command(author, version, about = "YCSB-style benchmark for Mini-LSM-MVCC", long_about = None)]
 struct Args {
     #[arg(long, default_value = "ycsb.db")]
     path: PathBuf,
@@ -126,7 +125,6 @@ fn build_options(args: &Args) -> LsmStorageOptions {
     }
 }
 
-/// Zipfian distribution sampler for skewed key access.
 struct Zipfian {
     n: u64,
     theta: f64,
@@ -160,13 +158,13 @@ impl Zipfian {
     }
 }
 
-async fn load_phase(storage: &Arc<MiniLsm>, record_count: u64, value_size: usize, _rng: &mut StdRng) -> Result<Duration> {
+fn load_phase(storage: &Arc<MiniLsm>, record_count: u64, value_size: usize, _rng: &mut StdRng) -> Result<Duration> {
     println!("[LOAD] Inserting {} records...", record_count);
     let start = Instant::now();
     for i in 0..record_count {
         let key = make_key(i);
         let value = make_value(value_size);
-        storage.put(&key, &value).await?;
+        storage.put(&key, &value)?;
     }
     let elapsed = start.elapsed();
     println!("[LOAD] Done in {:?} ({:.0} ops/sec)", elapsed, record_count as f64 / elapsed.as_secs_f64());
@@ -191,18 +189,23 @@ fn normalize_threads(threads: usize) -> usize {
     threads.max(1)
 }
 
-async fn load_phase_parallel(storage: &Arc<MiniLsm>, record_count: u64, value_size: usize, threads: usize) -> Result<Duration> {
+async fn load_phase_parallel(
+    storage: &Arc<MiniLsm>,
+    record_count: u64,
+    value_size: usize,
+    threads: usize,
+) -> Result<Duration> {
     println!("[LOAD] Inserting {} records with {} workers...", record_count, threads);
     let start = Instant::now();
     let mut handles = Vec::with_capacity(threads);
     for worker_id in 0..threads {
         let storage = Arc::clone(storage);
-        handles.push(tokio::spawn(async move {
+        handles.push(tokio::task::spawn_blocking(move || {
             let mut inserted = 0u64;
             for i in (worker_id as u64..record_count).step_by(threads) {
                 let key = make_key(i);
                 let value = make_value(value_size);
-                storage.put(&key, &value).await?;
+                storage.put(&key, &value)?;
                 inserted += 1;
             }
             Ok::<u64, anyhow::Error>(inserted)
@@ -222,7 +225,7 @@ async fn load_phase_parallel(storage: &Arc<MiniLsm>, record_count: u64, value_si
     Ok(elapsed)
 }
 
-async fn worker_run_loop(
+fn worker_run_loop(
     storage: Arc<MiniLsm>,
     args: Arc<Args>,
     worker_id: usize,
@@ -253,38 +256,38 @@ async fn worker_run_loop(
         match args.workload {
             YcsbWorkload::A => {
                 if rng.gen_bool(0.5) {
-                    storage.get(&key).await?;
+                    storage.get(&key)?;
                 } else {
                     let value = make_value(args.value_size);
-                    storage.put(&key, &value).await?;
+                    storage.put(&key, &value)?;
                 }
             }
             YcsbWorkload::B => {
                 if rng.gen_bool(0.95) {
-                    storage.get(&key).await?;
+                    storage.get(&key)?;
                 } else {
                     let value = make_value(args.value_size);
-                    storage.put(&key, &value).await?;
+                    storage.put(&key, &value)?;
                 }
             }
             YcsbWorkload::C => {
-                storage.get(&key).await?;
+                storage.get(&key)?;
             }
             YcsbWorkload::D => {
                 if rng.gen_bool(0.95) {
                     let latest = insert_counter.load(Ordering::Relaxed);
                     let read_key = make_key(rng.gen_range(0..latest.max(1)));
-                    storage.get(&read_key).await?;
+                    storage.get(&read_key)?;
                 } else {
                     let insert_id = insert_counter.fetch_add(1, Ordering::Relaxed);
                     let insert_key = make_key(insert_id);
                     let value = make_value(args.value_size);
-                    storage.put(&insert_key, &value).await?;
+                    storage.put(&insert_key, &value)?;
                 }
             }
             YcsbWorkload::E => {
                 if rng.gen_bool(0.95) {
-                    let mut iter = storage.scan(Bound::Included(&key), Bound::Unbounded).await?;
+                    let mut iter = storage.scan(Bound::Included(&key), Bound::Unbounded)?;
                     for _ in 0..args.scan_length {
                         if !iter.is_valid() {
                             break;
@@ -295,16 +298,16 @@ async fn worker_run_loop(
                     let insert_id = insert_counter.fetch_add(1, Ordering::Relaxed);
                     let insert_key = make_key(insert_id);
                     let value = make_value(args.value_size);
-                    storage.put(&insert_key, &value).await?;
+                    storage.put(&insert_key, &value)?;
                 }
             }
             YcsbWorkload::F => {
                 if rng.gen_bool(0.5) {
-                    storage.get(&key).await?;
+                    storage.get(&key)?;
                 } else {
-                    let _ = storage.get(&key).await?;
+                    let _ = storage.get(&key)?;
                     let value = make_value(args.value_size);
-                    storage.put(&key, &value).await?;
+                    storage.put(&key, &value)?;
                 }
             }
         }
@@ -337,16 +340,8 @@ async fn run_workload_parallel(
         let storage = Arc::clone(storage);
         let args = Arc::clone(&args);
         let insert_counter = Arc::clone(&insert_counter);
-        handles.push(tokio::spawn(async move {
-            worker_run_loop(
-                storage,
-                args,
-                worker_id,
-                worker_ops,
-                insert_counter,
-                collect_latencies,
-            )
-            .await
+        handles.push(tokio::task::spawn_blocking(move || {
+            worker_run_loop(storage, args, worker_id, worker_ops, insert_counter, collect_latencies)
         }));
     }
 
@@ -408,11 +403,11 @@ async fn main() -> Result<()> {
 
     let _ = std::fs::remove_dir_all(&args.path);
     let options = build_options(&args);
-    let storage = MiniLsm::open(&args.path, options).await?;
+    let storage = MiniLsm::open(&args.path, options)?;
     let mut rng = StdRng::seed_from_u64(args.seed);
 
     let load_time = if args.threads == 1 {
-        load_phase(&storage, args.record_count, args.value_size, &mut rng).await?
+        load_phase(&storage, args.record_count, args.value_size, &mut rng)?
     } else {
         load_phase_parallel(&storage, args.record_count, args.value_size, args.threads).await?
     };
@@ -430,7 +425,8 @@ async fn main() -> Result<()> {
         "[RUN] Running {} operations (workload {:?}) with {} workers...",
         args.operation_count, args.workload, args.threads
     );
-    let (run_time, mut latencies, workers) = run_workload_parallel(&storage, &args, args.operation_count, true).await?;
+    let (run_time, mut latencies, workers) =
+        run_workload_parallel(&storage, &args, args.operation_count, true).await?;
 
     report_latencies(&mut latencies);
     if args.report_per_thread {
@@ -441,7 +437,7 @@ async fn main() -> Result<()> {
     println!("  Load throughput: {:.0} ops/sec", args.record_count as f64 / load_time.as_secs_f64());
     println!("  Run throughput:  {:.0} ops/sec", args.operation_count as f64 / run_time.as_secs_f64());
 
-    storage.close().await?;
+    storage.close()?;
     let _ = std::fs::remove_dir_all(&args.path);
 
     Ok(())

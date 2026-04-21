@@ -115,7 +115,6 @@ impl LsmIterator {
     }
 }
 
-#[async_trait]
 impl StorageIterator for LsmIterator {
     type KeyType<'a> = &'a [u8];
 
