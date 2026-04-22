@@ -27,7 +27,7 @@ use crate::{
     table::{SsTable, SsTableBuilder},
 };
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_full_compaction() {
     // We do not use LSM iterator in this test because it's implemented as part of task 3
     let dir = tempdir().unwrap();
@@ -175,7 +175,7 @@ async fn generate_concat_sst(
     builder.build_for_test(path).await.unwrap()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task2_concat_iterator() {
     let dir = tempdir().unwrap();
     let mut sstables = Vec::new();
@@ -214,7 +214,7 @@ async fn test_task2_concat_iterator() {
     assert_eq!(iter.key().for_testing_key_ref(), b"00010");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task3_integration() {
     let dir = tempdir().unwrap();
     let storage =

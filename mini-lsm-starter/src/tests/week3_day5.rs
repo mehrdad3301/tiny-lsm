@@ -23,7 +23,7 @@ use crate::{
     tests::harness::check_lsm_iter_result_by_key,
 };
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_txn_integration() {
     let dir = tempdir().unwrap();
     let options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);

@@ -22,7 +22,7 @@ use crate::table::{FileObject, SsTable, SsTableBuilder, SsTableIterator};
 
 use super::harness::{check_iter_result_by_key_and_ts, generate_sst_with_ts};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_sst_build_multi_version_simple() {
     let mut builder = SsTableBuilder::new(16);
     builder.add(

@@ -23,7 +23,7 @@ use crate::{
 
 use super::harness::{check_iter_result_by_key, construct_merge_iterator_over_storage};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_watermark() {
     let mut watermark = Watermark::new();
     watermark.add_reader(0);
@@ -61,7 +61,7 @@ async fn test_task1_watermark() {
     assert_eq!(watermark.watermark(), Some(2001));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task2_snapshot_watermark() {
     let dir = tempdir().unwrap();
     let options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
@@ -82,7 +82,7 @@ async fn test_task2_snapshot_watermark() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task3_mvcc_compaction() {
     let dir = tempdir().unwrap();
     let options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);

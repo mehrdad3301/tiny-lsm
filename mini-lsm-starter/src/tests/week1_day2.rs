@@ -27,7 +27,7 @@ use crate::{
 
 use super::harness::{MockIterator, check_iter_result_by_key, expect_iter_error};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_memtable_iter() {
     use std::ops::Bound;
     let memtable = MemTable::create(0);
@@ -77,7 +77,7 @@ async fn test_task1_memtable_iter() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_empty_memtable_iter() {
     use std::ops::Bound;
     let memtable = MemTable::create(0);
@@ -97,7 +97,7 @@ async fn test_task1_empty_memtable_iter() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task2_merge_1() {
     let i1 = MockIterator::new(vec![
         (Bytes::from("a"), Bytes::from("1.1")),
@@ -148,7 +148,7 @@ async fn test_task2_merge_1() {
     ).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task2_merge_2() {
     let i1 = MockIterator::new(vec![
         (Bytes::from("a"), Bytes::from("1.1")),
@@ -203,7 +203,7 @@ async fn test_task2_merge_2() {
     check_iter_result_by_key(&mut iter, result).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task2_merge_empty() {
     let mut iter = MergeIterator::<MockIterator>::create(vec![]);
     check_iter_result_by_key(&mut iter, vec![]).await;
@@ -225,7 +225,7 @@ async fn test_task2_merge_empty() {
     ).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task2_merge_error() {
     let mut iter = MergeIterator::<MockIterator>::create(vec![]);
     check_iter_result_by_key(&mut iter, vec![]).await;
@@ -252,7 +252,7 @@ async fn test_task2_merge_error() {
     expect_iter_error(iter).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task3_fused_iterator() {
     let iter = MockIterator::new(vec![]);
     let mut fused_iter = FusedIterator::new(iter);
@@ -277,7 +277,7 @@ async fn test_task3_fused_iterator() {
     assert!(fused_iter.next().is_err());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task4_integration() {
     let dir = tempdir().unwrap();
     let storage = Arc::new(

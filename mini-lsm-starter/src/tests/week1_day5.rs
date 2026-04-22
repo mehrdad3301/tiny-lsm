@@ -31,7 +31,7 @@ fn num_of_keys() -> usize {
     100
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_bloom_filter() {
     let mut key_hashes = Vec::new();
     for idx in 0..num_of_keys() {
@@ -60,7 +60,7 @@ async fn test_task1_bloom_filter() {
     assert_ne!(x, 0, "bloom filter not taking effect?");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task2_sst_decode() {
     let mut builder = SsTableBuilder::new(128);
     for idx in 0..num_of_keys() {
@@ -78,7 +78,7 @@ async fn test_task2_sst_decode() {
     assert_eq!(bloom_1.filter, bloom_2.filter);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task3_block_key_compression() {
     let mut builder = SsTableBuilder::new(128);
     for idx in 0..num_of_keys() {

@@ -25,7 +25,7 @@ use crate::{
     lsm_storage::{LsmStorageInner, LsmStorageOptions, MiniLsm},
 };
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_storage_scan() {
     let dir = tempdir().unwrap();
     let storage =
@@ -81,7 +81,7 @@ async fn test_task1_storage_scan() {
     ).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_storage_get() {
     let dir = tempdir().unwrap();
     let storage =
@@ -133,7 +133,7 @@ async fn test_task1_storage_get() {
     assert_eq!(storage.get(b"555").await.unwrap(), None);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task2_auto_flush() {
     let dir = tempdir().unwrap();
     let storage = MiniLsm::open(&dir, LsmStorageOptions::default_for_week1_day6_test()).await.unwrap();
@@ -153,7 +153,7 @@ async fn test_task2_auto_flush() {
     assert!(!storage.inner.state.read().l0_sstables.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task3_sst_filter() {
     let dir = tempdir().unwrap();
     let storage =

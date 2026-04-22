@@ -21,14 +21,14 @@ use crate::{
     key::{KeySlice, KeyVec},
 };
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_block_build_single_key() {
     let mut builder = BlockBuilder::new(16);
     assert!(builder.add(KeySlice::for_testing_from_slice_no_ts(b"233"), b"233333"));
     builder.build();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_block_build_full() {
     let mut builder = BlockBuilder::new(16);
     assert!(builder.add(KeySlice::for_testing_from_slice_no_ts(b"11"), b"11"));
@@ -36,7 +36,7 @@ async fn test_block_build_full() {
     builder.build();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_block_build_large_1() {
     let mut builder = BlockBuilder::new(16);
     assert!(builder.add(
@@ -46,7 +46,7 @@ async fn test_block_build_large_1() {
     builder.build();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_block_build_large_2() {
     let mut builder = BlockBuilder::new(16);
     assert!(builder.add(KeySlice::for_testing_from_slice_no_ts(b"11"), b"1"));
@@ -78,18 +78,18 @@ fn generate_block() -> Block {
     builder.build()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_block_build_all() {
     generate_block();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_block_encode() {
     let block = generate_block();
     block.encode();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_block_decode() {
     let block = generate_block();
     let encoded = block.encode();
@@ -102,7 +102,7 @@ fn as_bytes(x: &[u8]) -> Bytes {
     Bytes::copy_from_slice(x)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_block_iterator() {
     let block = Arc::new(generate_block());
     let mut iter = BlockIterator::create_and_seek_to_first(block);
@@ -130,7 +130,7 @@ async fn test_block_iterator() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_block_seek_key() {
     let block = Arc::new(generate_block());
     let mut iter = BlockIterator::create_and_seek_to_key(block, key_of(0).as_key_slice());

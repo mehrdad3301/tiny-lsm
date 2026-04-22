@@ -18,6 +18,7 @@
 pub(crate) mod bloom;
 mod builder;
 mod iterator;
+mod prefetch;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -98,12 +99,14 @@ pub struct FileObject(Option<tokio::fs::File>, u64);
 
 impl FileObject {
     pub async fn read(&self, offset: u64, len: u64) -> Result<Vec<u8>> {
-        use tokio::io::{AsyncReadExt, AsyncSeekExt};
-        let mut file = self.0.as_ref().unwrap().try_clone().await?;
+        use std::os::unix::fs::FileExt;
+        let file = self.0.as_ref().unwrap();
+        let std_file = file.try_clone().await?.into_std().await;
         let mut data = vec![0; len as usize];
-        file.seek(std::io::SeekFrom::Start(offset)).await?;
-        file.read_exact(&mut data).await?;
-        Ok(data)
+        tokio::task::spawn_blocking(move || {
+            std_file.read_exact_at(&mut data, offset)?;
+            Ok(data)
+        }).await?
     }
 
     pub fn size(&self) -> u64 {
@@ -243,6 +246,52 @@ impl SsTable {
 
         let block = Block::decode(block);
         Ok(Arc::new(block))
+    }
+
+    /// Read multiple consecutive blocks in a single I/O operation for prefetching.
+    pub async fn read_blocks_range(
+        &self,
+        start_idx: usize,
+        count: usize,
+    ) -> Result<Vec<Arc<Block>>> {
+        if start_idx >= self.num_of_blocks() || count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let end_idx = (start_idx + count).min(self.num_of_blocks());
+        let start_offset = self.block_meta[start_idx].offset as u64;
+        let end_offset = self
+            .block_meta
+            .get(end_idx)
+            .map_or(self.block_meta_offset as u64, |m| m.offset as u64);
+
+        if end_offset <= start_offset {
+            return Ok(Vec::new());
+        }
+
+        let data = self.file.read(start_offset, end_offset - start_offset).await?;
+
+        let mut blocks = Vec::with_capacity(end_idx - start_idx);
+        let mut cursor = 0usize;
+        for i in start_idx..end_idx {
+            let block_size = self
+                .block_meta
+                .get(i + 1)
+                .map_or(self.block_meta_offset, |m| m.offset)
+                - self.block_meta[i].offset;
+
+            let block_data = &data[cursor..cursor + block_size];
+            let block_raw = &block_data[..block_data.len() - SIZEOF_U32];
+            let checksum = (&block_data[block_data.len() - SIZEOF_U32..]).get_u32();
+            if !crc32fast::hash(block_raw).eq(&checksum) {
+                return Err(anyhow!("corrupted block during prefetch at index {}", i));
+            }
+
+            blocks.push(Arc::new(Block::decode(block_raw)));
+            cursor += block_size;
+        }
+
+        Ok(blocks)
     }
 
     /// Read a block from disk, with block cache. (Day 4)

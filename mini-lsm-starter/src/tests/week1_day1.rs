@@ -21,7 +21,7 @@ use crate::{
     mem_table::MemTable,
 };
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_memtable_get() {
     let memtable = MemTable::create(0);
     memtable.for_testing_put_slice(b"key1", b"value1").await.unwrap();
@@ -41,7 +41,7 @@ async fn test_task1_memtable_get() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_memtable_overwrite() {
     let memtable = MemTable::create(0);
     memtable.for_testing_put_slice(b"key1", b"value1").await.unwrap();
@@ -64,7 +64,7 @@ async fn test_task1_memtable_overwrite() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task2_storage_integration() {
     let dir = tempdir().unwrap();
     let storage = Arc::new(
@@ -82,7 +82,7 @@ async fn test_task2_storage_integration() {
     storage.delete(b"0").await.unwrap(); // should NOT report any error
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task3_storage_integration() {
     let dir = tempdir().unwrap();
     let storage = Arc::new(
@@ -111,7 +111,7 @@ async fn test_task3_storage_integration() {
     assert!(storage.state.read().imm_memtables[0].approximate_size() > previous_approximate_size);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task3_freeze_on_capacity() {
     let dir = tempdir().unwrap();
     let mut options = LsmStorageOptions::default_for_week1_test();
@@ -132,7 +132,7 @@ async fn test_task3_freeze_on_capacity() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task4_storage_integration() {
     let dir = tempdir().unwrap();
     let storage = Arc::new(

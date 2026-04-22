@@ -26,7 +26,7 @@ use crate::{
     lsm_storage::{LsmStorageInner, LsmStorageOptions},
 };
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_merge_1() {
     let i1 = MockIterator::new(vec![
         (Bytes::from("a"), Bytes::from("1.1")),
@@ -52,7 +52,7 @@ async fn test_task1_merge_1() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_merge_2() {
     let i2 = MockIterator::new(vec![
         (Bytes::from("a"), Bytes::from("1.1")),
@@ -78,7 +78,7 @@ async fn test_task1_merge_2() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_merge_3() {
     let i2 = MockIterator::new(vec![
         (Bytes::from("a"), Bytes::from("1.1")),
@@ -103,7 +103,7 @@ async fn test_task1_merge_3() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_merge_4() {
     let i2 = MockIterator::new(vec![]);
     let i1 = MockIterator::new(vec![
@@ -139,7 +139,7 @@ async fn test_task1_merge_4() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task1_merge_5() {
     let i2 = MockIterator::new(vec![]);
     let i1 = MockIterator::new(vec![]);
@@ -147,7 +147,7 @@ async fn test_task1_merge_5() {
     check_iter_result_by_key(&mut iter, vec![]).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task2_storage_scan() {
     let dir = tempdir().unwrap();
     let storage =
@@ -235,7 +235,7 @@ async fn test_task2_storage_scan() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task3_storage_get() {
     let dir = tempdir().unwrap();
     let storage =

@@ -23,7 +23,7 @@ use crate::{
     lsm_storage::{LsmStorageOptions, MiniLsm},
 };
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_serializable_1() {
     let dir = tempdir().unwrap();
     let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
@@ -42,7 +42,7 @@ async fn test_serializable_1() {
     assert_eq!(storage.get(b"key2").await.unwrap(), Some(Bytes::from("2")));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_serializable_2() {
     let dir = tempdir().unwrap();
     let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
@@ -57,7 +57,7 @@ async fn test_serializable_2() {
     assert_eq!(storage.get(b"key1").await.unwrap(), Some(Bytes::from("2")));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_serializable_3_ts_range() {
     let dir = tempdir().unwrap();
     let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
@@ -76,7 +76,7 @@ async fn test_serializable_3_ts_range() {
     assert_eq!(storage.get(b"key2").await.unwrap(), Some(Bytes::from("2")));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_serializable_4_scan() {
     let dir = tempdir().unwrap();
     let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
@@ -99,7 +99,7 @@ async fn test_serializable_4_scan() {
     assert_eq!(storage.get(b"key2").await.unwrap(), Some(Bytes::from("2")));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_serializable_5_read_only() {
     let dir = tempdir().unwrap();
     let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);

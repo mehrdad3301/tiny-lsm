@@ -37,7 +37,7 @@ async fn test_integration_leveled() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_integration_tiered() {
     test_integration(CompactionOptions::Tiered(TieredCompactionOptions {
         num_tiers: 3,
@@ -49,7 +49,7 @@ async fn test_integration_tiered() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_integration_simple() {
     test_integration(CompactionOptions::Simple(SimpleLeveledCompactionOptions {
         size_ratio_percent: 200,

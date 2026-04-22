@@ -21,7 +21,7 @@ use crate::iterators::StorageIterator;
 use crate::key::{KeySlice, KeyVec};
 use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_sst_build_single_key() {
     let mut builder = SsTableBuilder::new(16);
     builder.add(KeySlice::for_testing_from_slice_no_ts(b"233"), b"233333");
@@ -29,7 +29,7 @@ async fn test_sst_build_single_key() {
     builder.build_for_test(dir.path().join("1.sst")).await.unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_sst_build_two_blocks() {
     let mut builder = SsTableBuilder::new(16);
     builder.add(KeySlice::for_testing_from_slice_no_ts(b"11"), b"11");
@@ -67,7 +67,7 @@ async fn generate_sst() -> (TempDir, SsTable) {
     (dir, builder.build_for_test(path).await.unwrap())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_sst_build_all() {
     let (_, sst) = generate_sst().await;
     assert_eq!(sst.first_key().as_key_slice(), key_of(0).as_key_slice());
@@ -77,7 +77,7 @@ async fn test_sst_build_all() {
     )
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_sst_decode() {
     let (_dir, sst) = generate_sst().await;
     let meta = sst.block_meta.clone();
@@ -126,7 +126,7 @@ async fn test_sst_iterator() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_sst_seek_key() {
     let (_dir, sst) = generate_sst().await;
     let sst = Arc::new(sst);
