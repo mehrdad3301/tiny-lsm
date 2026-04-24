@@ -32,13 +32,15 @@ async questions
 
 ----------
 TODO - async 
-- prefetch next sstable in iter.next method 
 - fix wal in async code 
+- key/values separation 
+- trivial move 
+- remove dependency to tokio ??
+- sql over mini-lsm ??
+- async iterators
 
 ----------
 TODO - PRs 
-- adding my solution 
-- simplifying code in txn iterator 
 - fixing book in tiered compaction 
 
 

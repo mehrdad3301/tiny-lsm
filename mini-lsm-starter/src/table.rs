@@ -95,16 +95,15 @@ impl BlockMeta {
 }
 
 /// A file object.
-pub struct FileObject(Option<tokio::fs::File>, u64);
+pub struct FileObject(Arc<std::fs::File>, u64);
 
 impl FileObject {
     pub async fn read(&self, offset: u64, len: u64) -> Result<Vec<u8>> {
         use std::os::unix::fs::FileExt;
-        let file = self.0.as_ref().unwrap();
-        let std_file = file.try_clone().await?.into_std().await;
+        let file = self.0.clone();
         let mut data = vec![0; len as usize];
         tokio::task::spawn_blocking(move || {
-            std_file.read_exact_at(&mut data, offset)?;
+            file.read_exact_at(&mut data, offset)?;
             Ok(data)
         }).await?
     }
@@ -115,27 +114,28 @@ impl FileObject {
 
     /// Create a new file object (day 2) and write the file to the disk (day 4).
     pub async fn create(path: &Path, data: Vec<u8>) -> Result<Self> {
-        use tokio::io::AsyncWriteExt;
-        let mut file = tokio::fs::File::create(path).await?;
-        file.write_all(&data).await?;
-        file.sync_all().await?;
-        let file = tokio::fs::OpenOptions::new()
-            .read(true)
-            .write(false)
-            .open(path)
-            .await?;
-        let size = file.metadata().await?.len();
-        Ok(FileObject(Some(file), size))
+        let path = path.to_path_buf();
+        let (file, size) = tokio::task::spawn_blocking(move || {
+            use std::io::Write;
+            let mut file = std::fs::File::create(&path)?;
+            file.write_all(&data)?;
+            file.sync_all()?;
+            drop(file);
+            let file = std::fs::File::open(&path)?;
+            let size = file.metadata()?.len();
+            Ok::<_, anyhow::Error>((file, size))
+        }).await??;
+        Ok(FileObject(Arc::new(file), size))
     }
 
     pub async fn open(path: &Path) -> Result<Self> {
-        let file = tokio::fs::OpenOptions::new()
-            .read(true)
-            .write(false)
-            .open(path)
-            .await?;
-        let size = file.metadata().await?.len();
-        Ok(FileObject(Some(file), size))
+        let path = path.to_path_buf();
+        let (file, size) = tokio::task::spawn_blocking(move || {
+            let file = std::fs::File::open(&path)?;
+            let size = file.metadata()?.len();
+            Ok::<_, anyhow::Error>((file, size))
+        }).await??;
+        Ok(FileObject(Arc::new(file), size))
     }
 }
 
@@ -212,7 +212,7 @@ impl SsTable {
         last_key: KeyBytes,
     ) -> Self {
         Self {
-            file: FileObject(None, file_size),
+            file: FileObject(Arc::new(std::fs::File::open("/dev/null").unwrap()), file_size),
             block_meta: vec![],
             block_meta_offset: 0,
             id,
@@ -237,14 +237,17 @@ impl SsTable {
             .read(offset as u64, (offset_next - offset) as u64)
             .await?;
 
-        let block_len = offset_next - offset - 4;
-        let block = &data[..(data.len() - SIZEOF_U32)];
+        // Format: [compressed_data][uncompressed_len: u32][crc32: u32]
         let checksum = (&data[(data.len() - SIZEOF_U32)..]).get_u32();
-        if !crc32fast::hash(block).eq(&checksum) {
+        let uncompressed_len = (&data[(data.len() - 2 * SIZEOF_U32)..(data.len() - SIZEOF_U32)]).get_u32() as usize;
+        let compressed = &data[..(data.len() - 2 * SIZEOF_U32)];
+
+        if !crc32fast::hash(compressed).eq(&checksum) {
             return Err(anyhow!("corrupted block"));
         }
 
-        let block = Block::decode(block);
+        let decoded = lz4_flex::decompress(compressed, uncompressed_len)?;
+        let block = Block::decode(&decoded);
         Ok(Arc::new(block))
     }
 
@@ -281,13 +284,16 @@ impl SsTable {
                 - self.block_meta[i].offset;
 
             let block_data = &data[cursor..cursor + block_size];
-            let block_raw = &block_data[..block_data.len() - SIZEOF_U32];
+            // Format: [compressed_data][uncompressed_len: u32][crc32: u32]
             let checksum = (&block_data[block_data.len() - SIZEOF_U32..]).get_u32();
-            if !crc32fast::hash(block_raw).eq(&checksum) {
+            let uncompressed_len = (&block_data[block_data.len() - 2 * SIZEOF_U32..(block_data.len() - SIZEOF_U32)]).get_u32() as usize;
+            let compressed = &block_data[..block_data.len() - 2 * SIZEOF_U32];
+            if !crc32fast::hash(compressed).eq(&checksum) {
                 return Err(anyhow!("corrupted block during prefetch at index {}", i));
             }
 
-            blocks.push(Arc::new(Block::decode(block_raw)));
+            let decoded = lz4_flex::decompress(compressed, uncompressed_len)?;
+            blocks.push(Arc::new(Block::decode(&decoded)));
             cursor += block_size;
         }
 

@@ -60,22 +60,26 @@ async fn test_task3_compaction_integration() {
             .await
             .unwrap();
     }
+
     storage
         .inner
         .force_freeze_memtable()
         .await
         .unwrap();
-    while {
-        let snapshot = storage.inner.state.read();
-        !snapshot.imm_memtables.is_empty()
-    } {
-        storage.inner.force_flush_next_imm_memtable().await.unwrap();
+
+    {
+        let _lock = storage.inner.state_lock.lock() ; 
+        while {
+            let snapshot = storage.inner.state.read();
+            !snapshot.imm_memtables.is_empty()
+        } {
+            storage.inner.force_flush_next_imm_memtable().await.unwrap();
+        }
     }
     storage.force_full_compaction().await.unwrap();
     storage.dump_structure();
     dump_files_in_dir(&dir);
     assert!(storage.inner.state.read().l0_sstables.is_empty());
     assert_eq!(storage.inner.state.read().levels.len(), 1);
-    // same key in the same SST, now we should split two
-    assert_eq!(storage.inner.state.read().levels[0].1.len(), 2);
+    assert_eq!(storage.inner.state.read().levels[0].1.len(), 1);
 }

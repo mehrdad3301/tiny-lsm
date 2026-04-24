@@ -92,13 +92,17 @@ impl SsTableBuilder {
     fn add_block(&mut self) {
         let builder = std::mem::replace(&mut self.builder, BlockBuilder::new(self.block_size));
         self.meta.push(BlockMeta {
-            offset: self.data.len(), // ??? read more about std::mem::{take, replace}
+            offset: self.data.len(),
             first_key: std::mem::take(&mut self.first_key).into_key_bytes(),
             last_key: std::mem::take(&mut self.last_key).into_key_bytes(),
         });
-        let new_block = builder.build().encode();
-        let checksum = crc32fast::hash(&new_block);
-        self.data.extend(&new_block);
+        let encoded = builder.build().encode();
+        let uncompressed_len = encoded.len() as u32;
+        let compressed = lz4_flex::compress(&encoded);
+        // Format: [compressed_data][uncompressed_len: u32][crc32: u32]
+        let checksum = crc32fast::hash(&compressed);
+        self.data.extend(&compressed);
+        self.data.put_u32(uncompressed_len);
         self.data.put_u32(checksum);
     }
 

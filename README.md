@@ -7,97 +7,44 @@ TinyLSM is a key-value storage engine built on top of [mini-lsm](https://skyzh.g
 ## What This Project Does
 
 - **Async engine** (`mini-lsm-starter/`) — complete LSM-tree with `async fn` on all I/O paths (WAL, SST reads, compaction, flush). Uses a shared tokio multi-threaded runtime.
-- **Sync MVCC baseline** (`mini-lsm-mvcc/`) — original synchronous reference solution with MVCC, used as the benchmark baseline.
-- **Day-by-day solutions** - check the commit history for day-by-day solution of the first three weeks
-
-## Async Architecture
-
-The entire I/O and compute stack was converted to async:
-
-| Component | Async Entry Point |
-|---|---|
-| Storage engine | `LsmStorage::open()`, `put()`, `get()`, `delete()`, `scan()`, `sync()`, `close()` |
-| Compaction | `compact()`, `spawn_compaction_task()`, `spawn_flush_task()` |
-| WAL | `Wal::create()`, `recover()`, `put()`, `put_batch()`, `sync()` |
-| Iterators | `ConcatIterator::create_and_seek_to_first()`, `create_and_seek_to_key()` |
-| SST recovery | parallel SST opens during recovery |
-
-Key dependencies: `tokio` (multi-threaded runtime), `futures`, `moka` (async cache).
+- **SSTable prefetching** — adaptive block-level readahead (1–4 blocks) with a separate per-iterator prefetch buffer. Overlaps I/O for upcoming blocks with CPU work during sequential scans.
+- **LZ4 block compression** — per-block compression reducing SST I/O transfer. Decompression cost is hidden behind async I/O on read-heavy workloads.
+- **Day-by-day solutions** — check the commit history for day-by-day solution of the first three weeks
 
 ## YCSB Benchmark Results
 
-Benchmarks run with `--compaction leveled --record-count 100000 --operation-count 100000 --seed 42`, WAL disabled. Full results in [`ycsb-results/`](./ycsb-results/).
+Benchmarks run with `--compaction leveled --record-count 100000 --operation-count 100000 --seed 42 --warmup-ops 10000`, WAL disabled. The async engine includes both SSTable prefetching and LZ4 block compression.
 
 ### Single-Threaded (Workloads A–F)
 
-Async dominates on workloads:
-
 | Workload | Async run ops/s | Baseline run ops/s | Delta |
 |---|---:|---:|---:|
-| A (50/50 r/w) | 575,587 | 360,070 | **+59.9%** |
-| B (95/5 r/w) | 542,511 | 285,615 | **+89.9%** |
-| C (100% read) | 607,417 | 299,233 | **+103.0%** |
-| D (read latest) | 575,012 | 286,546 | **+100.7%** |
-| F (50/50 r/w) | 353,934 | 182,644 | **+93.8%** |
+| A (50/50 r/w) | 789,981 | 558,668 | **+41.4%** |
+| B (95/5 r/w) | 809,046 | 482,350 | **+67.7%** |
+| C (100% read) | 955,995 | 503,948 | **+89.7%** |
+| D (read latest) | 838,946 | 492,701 | **+70.3%** |
+| E (short scans) | 175,456 | 165,751 | **+5.9%** |
+| F (read-modify-write) | 472,229 | 302,117 | **+56.3%** |
 
-### Multi-Threaded Highlights
+### Multi-Threaded (Up to Saturation)
 
-Full multi-threaded results in [`ycsb-results/mt-validation-comparison.md`](./ycsb-results/mt-validation-comparison.md).
+Both implementations saturate at 4 threads; 8-thread runs show lower throughput due to lock contention and I/O interference.
 
-**Workload B (95% read) — async wins at every thread count:**
-
-| Threads | Async ops/s | Baseline ops/s | Throughput delta | p99 latency delta |
-|---:|---:|---:|---:|---:|
-| 1 | 693,319 | 460,622 | +50.5% | -27.1% |
-| 2 | 1,138,147 | 756,750 | +50.4% | -29.0% |
-| 4 | 1,921,674 | 1,300,356 | +47.8% | -28.1% |
-| 8 | 1,378,717 | 1,179,574 | +16.9% | +43.8% |
-
-**Workload C (100% read) — largest async advantage:**
+**Workload B (95% read, 5% write):**
 
 | Threads | Async ops/s | Baseline ops/s | Throughput delta | p99 latency delta |
 |---:|---:|---:|---:|---:|
-| 1 | 849,700 | 474,711 | +79.0% | -38.93% |
-| 2 | 1,296,645 | 762,194 | +70.1% | -36.88% |
-| 4 | 1,750,440 | 1,297,356 | +34.9% | -29.00% |
-| 8 | 1,414,918 | 1,149,336 | +23.1% | -0.94% |
+| 1 | 775,466 | 460,858 | +68.3% | -45.2% |
+| 2 | 1,225,064 | 765,137 | +60.1% | -43.4% |
+| 4 | 1,815,109 | 1,375,782 | +31.9% | -17.0% |
 
-## SSTable Prefetching
+**Workload C (100% read):**
 
-Adaptive block-level prefetching for `SsTableIterator`, inspired by RocksDB's `FilePrefetchBuffer` + `BlockPrefetcher`. Overlaps I/O for upcoming blocks with CPU work on the current block during sequential scans.
-
-### How it works
-
-- **Separate prefetch buffer** per iterator (not block cache) — avoids cache pollution
-- **Adaptive readahead** — starts at 1 block ahead, doubles on sequential access up to 4 blocks
-
-### Workload E: Before vs After Prefetch
-
-Same config: `--compaction leveled --record-count 100000 --operation-count 100000 --seed 42`, WAL disabled. Both runs on same machine, same day, back-to-back.
-
-| Threads | No prefetch ops/s | Prefetch ops/s | Throughput change | p95 no pref | p95 prefetch | p95 change | p99 no pref | p99 prefetch | p99 change |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 170,231 | 170,313 | +0.0% | 7.00 | 6.71 | **-4.1%** | 10.38 | 8.88 | **-14.5%** |
-| 2 | 290,847 | 298,127 | **+2.5%** | 8.04 | 7.67 | **-4.6%** | 10.58 | 9.58 | **-9.5%** |
-| 4 | 532,828 | 550,061 | **+3.2%** | 8.71 | 8.38 | **-3.8%** | 12.75 | 13.00 | +2.0% |
-| 8 | 522,876 | 556,284 | **+6.4%** | 26.96 | 25.54 | **-5.3%** | 52.42 | 49.17 | **-6.2%** |
-
-Prefetching improves throughput at every thread count (+2–6%) with consistent p95 latency reduction (3–5%). The p99 improvement is most notable at 1 thread (-14.5%). The modest gains reflect that the current workload's scan length (100 keys) is short relative to block size, limiting how much readahead can help.
-
-### All Workloads: Prefetch Impact
-
-Full comparison across all workloads (A–F) at 1, 4, 8 threads: [`ycsb-results/prefetch-comparison.md`](./ycsb-results/prefetch-comparison.md).
-
-Highlights:
-
-| Workload | Threads | Best throughput Δ | Best p99 Δ |
-|---|---:|---:|---:|
-| D (read latest) | 1 | **+18.3%** | **-42.0%** |
-| B (95% read) | 4 | **+7.1%** | **-10.8%** |
-| C (100% read) | 4 | **+5.2%** | **-14.8%** |
-| E (range scan) | 4 | +2.5% | **-45.0%** |
-| A (50/50 r/w) | 8 | +0.2% | **-6.6%** |
-| F (r/m/w) | 8 | +3.0% | **-22.6%** |
+| Threads | Async ops/s | Baseline ops/s | Throughput delta | p99 latency delta |
+|---:|---:|---:|---:|---:|
+| 1 | 967,624 | 500,890 | +93.2% | -52.0% |
+| 2 | 1,462,232 | 785,834 | +86.1% | -45.2% |
+| 4 | 2,323,526 | 1,478,923 | +57.1% | -2.8% |
 
 ## Quick Start
 
