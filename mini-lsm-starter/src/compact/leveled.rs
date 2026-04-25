@@ -37,6 +37,17 @@ pub struct LeveledCompactionOptions {
     pub base_level_size_mb: usize,
 }
 
+impl Default for LeveledCompactionOptions {
+    fn default() -> Self {
+        Self {
+            level_size_multiplier: 10,
+            level0_file_num_compaction_trigger: 4,
+            max_levels: 7,
+            base_level_size_mb: 128,
+        }
+    }
+}
+
 pub struct LeveledCompactionController {
     options: LeveledCompactionOptions,
 }

@@ -367,6 +367,9 @@ async fn main() -> Result<()> {
             },
             enable_wal: args.enable_wal,
             serializable: args.serializable,
+            group_commit: true,
+            group_commit_timeout_ms: 10,
+            group_commit_max_batch: 100,
         },
     )
     .await?;

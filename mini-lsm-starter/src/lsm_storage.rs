@@ -103,6 +103,26 @@ pub struct LsmStorageOptions {
     pub compaction_options: CompactionOptions,
     pub enable_wal: bool,
     pub serializable: bool,
+    // Group commit options
+    pub group_commit: bool,
+    pub group_commit_timeout_ms: u64,
+    pub group_commit_max_batch: usize,
+}
+
+impl Default for LsmStorageOptions {
+    fn default() -> Self {
+        Self {
+            block_size: 4096,
+            target_sst_size: 256 << 20,
+            num_memtable_limit: 50,
+            compaction_options: CompactionOptions::Leveled(LeveledCompactionOptions::default()),
+            enable_wal: true,
+            serializable: false,
+            group_commit: false,
+            group_commit_timeout_ms: 10,
+            group_commit_max_batch: 100,
+        }
+    }
 }
 
 /// Create a bound of `KeySlice` from a bound of `&[u8]`.
@@ -164,6 +184,9 @@ impl LsmStorageOptions {
             enable_wal: false,
             num_memtable_limit: 50,
             serializable: false,
+            group_commit: false,
+            group_commit_timeout_ms: 10,
+            group_commit_max_batch: 100,
         }
     }
 
@@ -175,17 +198,23 @@ impl LsmStorageOptions {
             enable_wal: false,
             num_memtable_limit: 2,
             serializable: false,
+            group_commit: false,
+            group_commit_timeout_ms: 10,
+            group_commit_max_batch: 100,
         }
     }
 
     pub fn default_for_week2_test(compaction_options: CompactionOptions) -> Self {
         Self {
             block_size: 4096,
-            target_sst_size: 1 << 20, // 1MB
+            target_sst_size: 1 << 20,
             compaction_options,
             enable_wal: false,
             num_memtable_limit: 2,
             serializable: false,
+            group_commit: false,
+            group_commit_timeout_ms: 10,
+            group_commit_max_batch: 100,
         }
     }
 }
@@ -380,6 +409,9 @@ impl LsmStorageInner {
                 state.memtable = Arc::new(MemTable::create_with_wal(
                     state.memtable.id(),
                     Self::path_of_wal_static(path, state.memtable.id()),
+                    options.group_commit,
+                    options.group_commit_timeout_ms,
+                    options.group_commit_max_batch,
                 ).await?)
             }
             manifest.add_record_when_init(ManifestRecord::NewMemtable(state.memtable.id())).await?;
@@ -495,6 +527,9 @@ impl LsmStorageInner {
                 state.memtable = Arc::new(MemTable::create_with_wal(
                     next_sst_id,
                     Self::path_of_wal_static(path, next_sst_id),
+                    options.group_commit,
+                    options.group_commit_timeout_ms,
+                    options.group_commit_max_batch,
                 ).await?);
             } else {
                 state.memtable = Arc::new(MemTable::create(next_sst_id));
@@ -777,7 +812,13 @@ impl LsmStorageInner {
         let id = self.next_sst_id();
         let memtable;
         if self.options.enable_wal {
-            memtable = Arc::new(MemTable::create_with_wal(id, self.path_of_wal(id)).await?)
+            memtable = Arc::new(MemTable::create_with_wal(
+                id,
+                self.path_of_wal(id),
+                self.options.group_commit,
+                self.options.group_commit_timeout_ms,
+                self.options.group_commit_max_batch,
+            ).await?)
         } else {
             memtable = Arc::new(MemTable::create(id));
         }

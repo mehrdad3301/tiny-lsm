@@ -123,6 +123,9 @@ fn build_options(args: &Args) -> LsmStorageOptions {
         compaction_options,
         enable_wal: args.enable_wal,
         serializable: false,
+        group_commit: true,
+        group_commit_timeout_ms: 10,
+        group_commit_max_batch: 100,
     }
 }
 

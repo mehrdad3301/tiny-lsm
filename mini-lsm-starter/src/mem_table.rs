@@ -27,7 +27,6 @@ use crossbeam_skiplist::map::Entry;
 use nom::AsBytes;
 use ouroboros::self_referencing;
 
-use async_trait::async_trait;
 use crate::iterators::StorageIterator;
 use crate::key::{KeyBytes, KeySlice, TS_DEFAULT};
 use crate::table::SsTableBuilder;
@@ -39,7 +38,7 @@ use crate::wal::Wal;
 /// chapters of week 1 and week 2.
 pub struct MemTable {
     map: Arc<SkipMap<KeyBytes, Bytes>>,
-    wal: Option<Wal>,
+    wal: Option<Arc<Wal>>,
     id: usize,
     approximate_size: Arc<AtomicUsize>,
 }
@@ -79,12 +78,22 @@ impl MemTable {
         }
     }
 
-    /// Create a new mem-table with WAL
-    pub async fn create_with_wal(id: usize, path: impl AsRef<Path>) -> Result<Self> {
+    /// Create a new mem-table with WAL and optional group commit
+    pub async fn create_with_wal(
+        id: usize,
+        path: impl AsRef<Path>,
+        enable_group_commit: bool,
+        timeout_ms: u64,
+        max_batch: usize,
+    ) -> Result<Self> {
+        let mut wal = Wal::create(path).await?;
+        if enable_group_commit {
+            wal.enable_group_commit(timeout_ms, max_batch);
+        }
         Ok(Self {
             map: Arc::new(SkipMap::new()),
             id: id,
-            wal: Some(Wal::create(path).await?),
+            wal: Some(Arc::new(wal)),
             approximate_size: Arc::new(AtomicUsize::new(0)),
         })
     }
@@ -96,7 +105,7 @@ impl MemTable {
         Ok(Self {
             map: map,
             id: id,
-            wal: Some(wal),
+            wal: Some(Arc::new(wal)),
             approximate_size: Arc::new(AtomicUsize::new(0)),
         })
     }
@@ -139,21 +148,24 @@ impl MemTable {
     /// In week 2, day 6, also flush the data to WAL.
     /// In week 3, day 5, modify the function to use the batch API.
     pub async fn put(&self, key: KeySlice<'_>, value: &[u8]) -> Result<()> {
+        if let Some(wal) = &self.wal {
+            Wal::put(wal, key, value).await?;
+        }
         let key_bytes =
             KeyBytes::from_bytes_with_ts(Bytes::copy_from_slice(key.key_ref()), key.ts());
         let size = key.key_len() + value.len();
         self.map.insert(key_bytes, Bytes::copy_from_slice(value));
         self.approximate_size
             .fetch_add(size, std::sync::atomic::Ordering::Relaxed);
-        if let Some(wal) = &self.wal {
-            wal.put(key, value).await?;
-        }
 
         Ok(())
     }
 
     /// Implement this in week 3, day 5; if you want to implement this earlier, use `&[u8]` as the key type.
     pub async fn put_batch(&self, data: &[(KeySlice<'_>, &[u8])]) -> Result<()> {
+        if let Some(wal) = &self.wal {
+            Wal::put_batch(wal, data).await?;
+        }
         for (key, value) in data {
             let key_bytes = key.to_key_vec().into_key_bytes();
             let size = key.key_len() + value.len();
@@ -166,7 +178,7 @@ impl MemTable {
 
     pub async fn sync_wal(&self) -> Result<()> {
         if let Some(ref wal) = self.wal {
-            wal.sync().await?;
+            Wal::sync(wal).await?;
         }
         Ok(())
     }
@@ -210,6 +222,11 @@ impl MemTable {
     /// Only use this function when closing the database
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
+    }
+
+    /// Get the WAL for this memtable (for group commit initialization)
+    pub fn get_wal(&self) -> Option<&Arc<Wal>> {
+        self.wal.as_ref()
     }
 }
 
