@@ -1,4 +1,4 @@
-# Tiny-LSM: Async LSM-Tree Storage Engine
+# Tiny-LSM: An LSM-Tree Storage Engine
 
 [![CI (main)](https://github.com/skyzh/mini-lsm/actions/workflows/main.yml/badge.svg)](https://github.com/skyzh/mini-lsm/actions/workflows/main.yml)
 
