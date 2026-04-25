@@ -74,4 +74,4 @@ cargo run -p mini-lsm-mvcc --release --bin ycsb-bench-mvcc-ref -- \
 
 ## License
 
-The Tiny-LSM starter code and solution are under [Apache 2.0 license](LICENSE). The author reserves the full copyright of the course materials (markdown files and figures).
+The Tiny-LSM and solution are under [Apache 2.0 license](LICENSE). The author reserves the full copyright of the course materials (markdown files and figures).
