@@ -32,9 +32,11 @@ async questions
 
 ----------
 TODO - async 
-- fix wal in async code 
-- key/values separation 
 - trivial move 
+- group commit in wal 
+- fix wal ordering 
+- DIRECT_IO
+- key/values separation 
 - remove dependency to tokio ??
 - sql over mini-lsm ??
 - async iterators

@@ -239,6 +239,18 @@ impl LsmStorageInner {
                 lower_level_sst_ids,
                 is_lower_level_bottom_level,
             }) => {
+                // Trivial move: single SST from a real level with no lower overlap,
+                if matches!(task, CompactionTask::Leveled(_))
+                    && upper_level.is_some()
+                    && upper_level_sst_ids.len() == 1
+                    && lower_level_sst_ids.is_empty()
+                    && !is_lower_level_bottom_level
+                    && self.compaction_filters.lock().await.is_empty()
+                {
+                    let sst = snapshot.sstables.get(&upper_level_sst_ids[0]).unwrap().clone();
+                    return Ok(vec![sst]);
+                }
+
                 if let Some(_) = upper_level {
                     let mut sstables = Vec::with_capacity(upper_level_sst_ids.len());
                     for id in upper_level_sst_ids.iter() {
@@ -401,13 +413,20 @@ impl LsmStorageInner {
                 let mut snapshot = self.state.read().as_ref().clone();
                 // ??? what happens to the readers when we modify snapshot ???
                 for table in generated_sstables {
-                    let result = snapshot.sstables.insert(table.sst_id(), table);
-                    assert!(result.is_none());
+                    snapshot.sstables.insert(table.sst_id(), table);
                 }
 
                 let (mut snapshot, sstables_to_remove) = self
                     .compaction_controller
                     .apply_compaction_result(&snapshot, &task, &generated_sstable_ids, false);
+
+                // Trivial move: output IDs are the moved SSTs — exclude from removal
+                let output_id_set: HashSet<usize> =
+                    generated_sstable_ids.iter().copied().collect();
+                let sstables_to_remove: Vec<usize> = sstables_to_remove
+                    .into_iter()
+                    .filter(|id| !output_id_set.contains(id))
+                    .collect();
 
                 for table_id in sstables_to_remove.iter() {
                     let result = snapshot.sstables.remove(table_id);

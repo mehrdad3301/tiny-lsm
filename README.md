@@ -9,6 +9,7 @@ TinyLSM is a key-value storage engine built on top of [mini-lsm](https://skyzh.g
 - **Async engine** (`mini-lsm-starter/`) — complete LSM-tree with `async fn` on all I/O paths (WAL, SST reads, compaction, flush). Uses a shared tokio multi-threaded runtime.
 - **SSTable prefetching** — adaptive block-level readahead (1–4 blocks) with a separate per-iterator prefetch buffer. Overlaps I/O for upcoming blocks with CPU work during sequential scans.
 - **LZ4 block compression** — per-block compression reducing SST I/O transfer. Decompression cost is hidden behind async I/O on read-heavy workloads.
+- **Trivial move compaction** — during leveled compaction, when a source SST has no overlapping keys with the target level and the target is not the bottom level, the SST is reassigned without rewriting. Saves read + write I/O.
 - **Day-by-day solutions** — check the commit history for day-by-day solution of the first three weeks
 
 ## YCSB Benchmark Results

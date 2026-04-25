@@ -394,8 +394,13 @@ impl LsmStorageInner {
                         let (new_state, removed_files) = compaction_controller
                             .apply_compaction_result(&state, &task, &output, true);
 
-                        // try removing old ssts
+                        // Trivial move: output IDs are moved SSTs still alive on disk
+                        let output_id_set: std::collections::HashSet<usize> =
+                            output.iter().copied().collect();
                         for table_id in removed_files {
+                            if output_id_set.contains(&table_id) {
+                                continue;
+                            }
                             if let Err(err) =
                                 tokio::fs::remove_file(Self::path_of_sst_static(path, table_id)).await
                             {
