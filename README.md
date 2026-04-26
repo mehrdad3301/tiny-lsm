@@ -6,12 +6,17 @@ TinyLSM is a key-value storage engine built on top of [mini-lsm](https://skyzh.g
 
 ## What This Project Does
 
-- **Async engine** (`mini-lsm-starter/`) — complete LSM-tree with `async fn` on all I/O paths (WAL, SST reads, compaction, flush). Uses a shared tokio multi-threaded runtime.
-- **SSTable prefetching** — adaptive block-level readahead (1–4 blocks) with a separate per-iterator prefetch buffer. Overlaps I/O for upcoming blocks with CPU work during sequential scans.
-- **LZ4 block compression** — per-block compression reducing SST I/O transfer. Decompression cost is hidden behind async I/O on read-heavy workloads.
-- **Trivial move compaction** — during leveled compaction, when a source SST has no overlapping keys with the target level and the target is not the bottom level, the SST is reassigned without rewriting. Saves read + write I/O.
-- **WAL group commit** — batches multiple writes together and flushes them in a single `fsync` operation. Reduces syscall overhead and write amplification, improving throughput for write-heavy workloads. Configurable timeout and batch size.
-- **Day-by-day solutions** — check the commit history for day-by-day solution of the first three weeks.
+**Core LSM-Tree Engine:**
+- **MVCC & serializability** — Multi-Version Concurrency Control with snapshot isolation and serializable transactions
+- **Compaction algorithms** — Leveled and tiered strategies for write vs read amplification tradeoffs
+- **Bloom filters** — Per-SST probabilistic filter to eliminate unnecessary disk reads
+- **Compaction filters** — User-defined callbacks during compaction for filtering/transforming data
+- **Async engine** - Async I/O on all paths
+- **SSTable prefetching** — Adaptive block-level readahead overlapping I/O with CPU work
+- **LZ4 block compression** — Per-block compression reducing SST I/O transfer
+- **Trivial move compaction** — Reassign SSTs without rewriting when no key overlap
+- **WAL group commit** — Batch multiple writes for single `fsync` reducing syscall overhead
+- **Day-by-day solutions** — Check commit history for first three weeks
 
 ## YCSB Benchmark Results
 
